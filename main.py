@@ -39,10 +39,11 @@ def load_configuration() -> dict:
         "version": "1.0.0",
         "environment": os.getenv("KRATOS_ENV", "development"),
         
-        # AutoGen/LLM configuration
-        "model": os.getenv("OPENAI_MODEL", "gpt-4"),
-        "api_key": os.getenv("OPENAI_API_KEY", ""),
-        "base_url": os.getenv("OPENAI_BASE_URL", ""),
+        # Azure OpenAI configuration
+        "azure_openai_api_key": os.getenv("AZURE_OPENAI_API_KEY", ""),
+        "azure_openai_endpoint": os.getenv("AZURE_OPENAI_ENDPOINT", ""),
+        "azure_openai_api_version": os.getenv("AZURE_OPENAI_API_VERSION", "2024-02-15-preview"),
+        "azure_openai_deployment_name": os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME", "gpt-4"),
         "temperature": float(os.getenv("AUTOGEN_TEMPERATURE", "0.1")),
         "timeout": int(os.getenv("AUTOGEN_TIMEOUT", "120")),
         "max_round": int(os.getenv("AUTOGEN_MAX_ROUND", "10")),
@@ -184,9 +185,14 @@ async def main():
     config = load_configuration()
     
     # Validate configuration
-    if not config["api_key"]:
-        logger.error("❌ OPENAI_API_KEY not found in environment variables")
-        logger.error("Please set your OpenAI API key in the .env file or environment")
+    if not config["azure_openai_api_key"]:
+        logger.error("❌ AZURE_OPENAI_API_KEY not found in environment variables")
+        logger.error("Please set your Azure OpenAI API key in the .env file or environment")
+        sys.exit(1)
+    
+    if not config["azure_openai_endpoint"]:
+        logger.error("❌ AZURE_OPENAI_ENDPOINT not found in environment variables")
+        logger.error("Please set your Azure OpenAI endpoint in the .env file or environment")
         sys.exit(1)
     
     # Check if MCP endpoint is configured

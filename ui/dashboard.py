@@ -123,9 +123,11 @@ class KratosDashboard:
     def _load_config(self) -> Dict[str, Any]:
         """Load KRATOS configuration"""
         config = {
-            # AutoGen/LLM configuration
-            "model": os.getenv("OPENAI_MODEL", "gpt-4"),
-            "api_key": os.getenv("OPENAI_API_KEY", ""),
+            # Azure OpenAI configuration
+            "azure_openai_api_key": os.getenv("AZURE_OPENAI_API_KEY", ""),
+            "azure_openai_endpoint": os.getenv("AZURE_OPENAI_ENDPOINT", ""),
+            "azure_openai_api_version": os.getenv("AZURE_OPENAI_API_VERSION", "2024-02-15-preview"),
+            "azure_openai_deployment_name": os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME", "gpt-4"),
             "temperature": float(os.getenv("AUTOGEN_TEMPERATURE", "0.1")),
             "timeout": int(os.getenv("AUTOGEN_TIMEOUT", "120")),
             "max_round": int(os.getenv("AUTOGEN_MAX_ROUND", "10")),
@@ -240,7 +242,9 @@ class KratosDashboard:
             # Environment check
             env_vars = [
                 "AKS_MCP_ENDPOINT",
-                "OPENAI_API_KEY"
+                "AZURE_OPENAI_API_KEY",
+                "AZURE_OPENAI_ENDPOINT",
+                "AZURE_OPENAI_DEPLOYMENT_NAME"
             ]
             
             for var in env_vars:

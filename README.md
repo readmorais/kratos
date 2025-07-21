@@ -71,7 +71,7 @@
 - Python 3.10+
 - kubectl configured with access to one or more Kubernetes clusters
 - Kubeconfig file with cluster contexts
-- OpenAI API key for AutoGen functionality
+- Azure OpenAI service with API key and endpoint for AutoGen functionality
 
 ### Installation
 
@@ -104,9 +104,11 @@ kubectl config use-context your-cluster-name  # Set default context
 Edit `.env` file with your settings:
 
 ```env
-
-# OpenAI Configuration
-OPENAI_API_KEY=your_openai_api_key
+# Azure OpenAI Configuration
+AZURE_OPENAI_API_KEY=your_azure_openai_api_key_here
+AZURE_OPENAI_ENDPOINT=https://your-resource-name.openai.azure.com/
+AZURE_OPENAI_API_VERSION=2024-02-15-preview
+AZURE_OPENAI_DEPLOYMENT_NAME=gpt-4
 
 # MCP Configuration
 AKS_MCP_ENDPOINT=http://localhost:3000
@@ -243,7 +245,7 @@ mcp_servers:
 
 ### Security Configuration
 
-- **API Keys**: Store in environment variables
+- **API Keys**: Store Azure OpenAI credentials in environment variables
 - **RBAC**: Configure appropriate Kubernetes permissions
 - **Network**: Secure MCP server endpoints
 - **Logging**: Enable audit logging for compliance
@@ -305,7 +307,7 @@ mypy kratos/
    ```
 
 3. **AutoGen Configuration**
-   - Verify `OPENAI_API_KEY` is set
+   - Verify `AZURE_OPENAI_API_KEY` and `AZURE_OPENAI_ENDPOINT` are set
    - Check model availability and quotas
 
 4. **MCP Connection Issues**
@@ -354,6 +356,7 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 ## 🙏 Acknowledgments
 
 - **Microsoft AutoGen**: For the excellent multi-agent framework
+- **Azure OpenAI Service**: For providing enterprise-grade AI capabilities
 - **Streamlit**: For the intuitive web interface framework
 - **Kubernetes Community**: For the robust container orchestration platform
 - **MCP Protocol**: For standardized agent communication

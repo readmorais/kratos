@@ -32,9 +32,15 @@ class KratosController:
         
         # AutoGen configuration
         self.llm_config = {
-            "model": config.get("model", "gpt-4"),
-            "api_key": config.get("api_key"),
-            "base_url": config.get("base_url"),
+            "config_list": [
+                {
+                    "model": config.get("azure_openai_deployment_name", "gpt-4"),
+                    "api_type": "azure",
+                    "api_key": config.get("azure_openai_api_key"),
+                    "base_url": config.get("azure_openai_endpoint"),
+                    "api_version": config.get("azure_openai_api_version", "2024-02-15-preview"),
+                }
+            ],
             "temperature": config.get("temperature", 0.1),
             "timeout": config.get("timeout", 120),
         }
