@@ -35,9 +35,9 @@ class KratosController:
             "config_list": [
                 {
                     "model": config.get("azure_openai_deployment_name", "gpt-4"),
-                    "api_type": "azure",
+                    "api_type": "azure", 
                     "api_key": config.get("azure_openai_api_key"),
-                    "base_url": config.get("azure_openai_endpoint"),
+                    "azure_endpoint": config.get("azure_openai_endpoint"),
                     "api_version": config.get("azure_openai_api_version", "2024-02-15-preview"),
                 }
             ],

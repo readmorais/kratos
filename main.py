@@ -193,6 +193,7 @@ async def main():
     if not config["azure_openai_endpoint"]:
         logger.error("❌ AZURE_OPENAI_ENDPOINT not found in environment variables")
         logger.error("Please set your Azure OpenAI endpoint in the .env file or environment")
+        logger.error("Example: AZURE_OPENAI_ENDPOINT=https://your-resource-name.openai.azure.com/")
         sys.exit(1)
     
     # Check if MCP endpoint is configured
