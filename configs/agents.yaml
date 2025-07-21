@@ -1,0 +1,49 @@
+# KRATOS Agent Registry
+agents:
+  k8s-agent:
+    name: "Kubernetes Agent"
+    type: "infrastructure"
+    description: "Manages Azure Kubernetes Service clusters via MCP server"
+    version: "1.0.0"
+    enabled: true
+    capabilities:
+      - "cluster_management"
+      - "pod_operations"
+      - "deployment_management"
+      - "monitoring"
+      - "yaml_operations"
+    functions:
+      - get_pods
+      - restart_deployment
+      - apply_yaml
+      - get_node_metrics
+      - get_cluster_health
+      - scale_deployment
+      - get_logs
+    mcp_server: "aks-mcp"
+    authentication:
+      method: "azure_cli"
+      fallback: "managed_identity"
+    timeout: 300
+    retry_attempts: 3
+
+  # Future agents can be added here
+  # monitoring-agent:
+  #   name: "Monitoring Agent"
+  #   type: "observability"
+  #   ...
+
+# Global agent settings
+global_settings:
+  default_timeout: 120
+  max_concurrent_tasks: 5
+  log_all_interactions: true
+  enable_metrics: true
+  
+# MCP Server configurations
+mcp_servers:
+  aks-mcp:
+    endpoint: "${AKS_MCP_ENDPOINT}"
+    type: "kubernetes"
+    authentication_required: true
+    health_check_interval: 30

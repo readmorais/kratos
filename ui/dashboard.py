@@ -1,0 +1,449 @@
+"""
+KRATOS Streamlit Dashboard
+Web interface for multi-agent Kubernetes operations
+"""
+
+import streamlit as st
+import asyncio
+import json
+import yaml
+import logging
+from datetime import datetime
+from typing import Dict, Any, Optional
+import os
+import sys
+
+# Add project root to path
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from orchestrator.controller import KratosController
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Page configuration
+st.set_page_config(
+    page_title="KRATOS Dashboard",
+    page_icon="⚡",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+# Custom CSS
+st.markdown("""
+<style>
+    .main-header {
+        text-align: center;
+        color: #1f77b4;
+        font-size: 3rem;
+        font-weight: bold;
+        margin-bottom: 2rem;
+    }
+    
+    .agent-card {
+        border: 1px solid #ddd;
+        border-radius: 8px;
+        padding: 1rem;
+        margin: 0.5rem 0;
+        background-color: #f8f9fa;
+    }
+    
+    .status-success {
+        color: #28a745;
+        font-weight: bold;
+    }
+    
+    .status-error {
+        color: #dc3545;
+        font-weight: bold;
+    }
+    
+    .status-warning {
+        color: #ffc107;
+        font-weight: bold;
+    }
+    
+    .function-card {
+        border-left: 4px solid #1f77b4;
+        padding: 0.5rem;
+        margin: 0.25rem 0;
+        background-color: #f0f8ff;
+    }
+    
+    .conversation-message {
+        border-radius: 8px;
+        padding: 1rem;
+        margin: 0.5rem 0;
+    }
+    
+    .user-message {
+        background-color: #e3f2fd;
+        border-left: 4px solid #2196f3;
+    }
+    
+    .assistant-message {
+        background-color: #f3e5f5;
+        border-left: 4px solid #9c27b0;
+    }
+    
+    .system-message {
+        background-color: #fff3e0;
+        border-left: 4px solid #ff9800;
+    }
+</style>
+""", unsafe_allow_html=True)
+
+class KratosDashboard:
+    """Main dashboard class for KRATOS"""
+    
+    def __init__(self):
+        self.controller = None
+        self.initialized = False
+        
+    async def initialize_controller(self) -> bool:
+        """Initialize the KRATOS controller"""
+        try:
+            # Load configuration
+            config = self._load_config()
+            
+            # Initialize controller
+            self.controller = KratosController(config)
+            self.initialized = await self.controller.initialize()
+            
+            return self.initialized
+            
+        except Exception as e:
+            logger.error(f"Failed to initialize controller: {e}")
+            st.error(f"Failed to initialize KRATOS: {e}")
+            return False
+    
+    def _load_config(self) -> Dict[str, Any]:
+        """Load KRATOS configuration"""
+        config = {
+            # AutoGen/LLM configuration
+            "model": os.getenv("OPENAI_MODEL", "gpt-4"),
+            "api_key": os.getenv("OPENAI_API_KEY", ""),
+            "temperature": float(os.getenv("AUTOGEN_TEMPERATURE", "0.1")),
+            "timeout": int(os.getenv("AUTOGEN_TIMEOUT", "120")),
+            "max_round": int(os.getenv("AUTOGEN_MAX_ROUND", "10")),
+            
+            # Agent configurations
+            "agents": {
+                "k8s-agent": {
+                    "mcp_endpoint": os.getenv("AKS_MCP_ENDPOINT", "http://localhost:3000"),
+                    "subscription_id": os.getenv("AZURE_SUBSCRIPTION_ID", ""),
+                    "resource_group": os.getenv("AZURE_RESOURCE_GROUP", ""),
+                    "cluster_name": os.getenv("AZURE_AKS_CLUSTER_NAME", ""),
+                }
+            }
+        }
+        
+        return config
+    
+    def render_header(self):
+        """Render the dashboard header"""
+        st.markdown('<div class="main-header">⚡ KRATOS</div>', unsafe_allow_html=True)
+        st.markdown('<div style="text-align: center; color: #666; font-size: 1.2rem; margin-bottom: 2rem;">Kubernetes Runtime Agentic Operating System</div>', unsafe_allow_html=True)
+        
+        # Status indicators
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            if self.initialized:
+                st.success("🟢 Controller Online")
+            else:
+                st.error("🔴 Controller Offline")
+        
+        with col2:
+            if self.controller and self.controller.agents:
+                agent_count = len(self.controller.agents)
+                st.info(f"🤖 {agent_count} Agent{'s' if agent_count != 1 else ''} Active")
+            else:
+                st.warning("🤖 0 Agents Active")
+        
+        with col3:
+            if self.controller:
+                status = self.controller.get_agent_status()
+                running_tasks = status.get("running_tasks", 0)
+                if running_tasks > 0:
+                    st.warning(f"⚙️ {running_tasks} Task{'s' if running_tasks != 1 else ''} Running")
+                else:
+                    st.success("⚙️ Ready")
+            else:
+                st.info("⚙️ Standby")
+        
+        with col4:
+            current_time = datetime.now().strftime("%H:%M:%S")
+            st.info(f"🕒 {current_time}")
+    
+    def render_sidebar(self):
+        """Render the sidebar with agent information"""
+        with st.sidebar:
+            st.header("🎛️ Control Panel")
+            
+            # Agent status
+            if self.controller:
+                status = self.controller.get_agent_status()
+                
+                st.subheader("🤖 Agents")
+                for agent_name, agent_info in status.get("agents", {}).items():
+                    with st.expander(f"{agent_name}", expanded=False):
+                        if agent_info.get("initialized", False):
+                            st.success("Status: Online")
+                        else:
+                            st.error("Status: Offline")
+                        
+                        st.write("**Capabilities:**")
+                        for cap in agent_info.get("capabilities", []):
+                            st.write(f"• {cap}")
+                
+                # Available functions
+                st.subheader("⚡ Functions")
+                functions = self.controller.get_available_functions()
+                for agent_name, func_list in functions.items():
+                    with st.expander(f"{agent_name} Functions", expanded=False):
+                        for func in func_list:
+                            st.markdown(f"""
+                            <div class="function-card">
+                                <strong>{func['name']}</strong><br>
+                                <small>{func['description']}</small>
+                            </div>
+                            """, unsafe_allow_html=True)
+            
+            # Configuration
+            st.subheader("⚙️ Settings")
+            
+            # Environment check
+            env_vars = [
+                "AZURE_SUBSCRIPTION_ID",
+                "AZURE_RESOURCE_GROUP", 
+                "AZURE_AKS_CLUSTER_NAME",
+                "OPENAI_API_KEY"
+            ]
+            
+            for var in env_vars:
+                value = os.getenv(var, "")
+                if value:
+                    st.success(f"✅ {var}")
+                else:
+                    st.error(f"❌ {var}")
+    
+    def render_task_interface(self):
+        """Render the main task interface"""
+        st.header("🚀 Task Execution")
+        
+        # Task creation form
+        with st.container():
+            col1, col2 = st.columns([2, 1])
+            
+            with col1:
+                # Message input
+                user_message = st.text_area(
+                    "Enter your Kubernetes task:",
+                    placeholder="e.g., 'Show me all pods in the default namespace' or 'Restart the nginx deployment in staging'",
+                    height=100,
+                    help="Describe what you want to do with your Kubernetes cluster"
+                )
+            
+            with col2:
+                st.write("**Agent Selection:**")
+                
+                # Agent selection
+                if self.controller and self.controller.autogen_agents:
+                    agent_options = ["Auto-select"] + list(self.controller.autogen_agents.keys())
+                    selected_agent = st.selectbox(
+                        "Choose agent:",
+                        agent_options,
+                        index=0,
+                        help="Select a specific agent or let the system choose automatically"
+                    )
+                    
+                    if selected_agent == "Auto-select":
+                        selected_agent = None
+                else:
+                    st.warning("No agents available")
+                    selected_agent = None
+                
+                # Execute button
+                execute_button = st.button(
+                    "🚀 Execute Task",
+                    type="primary",
+                    disabled=not (self.initialized and user_message.strip()),
+                    help="Execute the task with the selected agent"
+                )
+        
+        # Execute task
+        if execute_button and user_message.strip():
+            await self._execute_task(user_message, selected_agent)
+    
+    async def _execute_task(self, message: str, selected_agent: Optional[str]):
+        """Execute a task and display results"""
+        with st.spinner("🔄 Processing task..."):
+            try:
+                # Process the message
+                result = await self.controller.process_user_message(message, selected_agent)
+                
+                if result.get("status") == "success":
+                    st.success("✅ Task completed successfully!")
+                    
+                    # Display results
+                    task_result = result.get("result", {})
+                    
+                    # Show conversation
+                    if "messages" in task_result:
+                        self._display_conversation(task_result["messages"])
+                    
+                    # Show summary
+                    if "summary" in task_result:
+                        st.info(f"📋 **Summary:** {task_result['summary']}")
+                    
+                    # Show raw result for debugging
+                    with st.expander("🔍 Raw Result", expanded=False):
+                        st.json(task_result)
+                
+                else:
+                    st.error(f"❌ Task failed: {result.get('message', 'Unknown error')}")
+                    
+            except Exception as e:
+                st.error(f"❌ Error executing task: {e}")
+                logger.error(f"Task execution error: {e}")
+    
+    def _display_conversation(self, messages: list):
+        """Display conversation messages"""
+        st.subheader("💬 Conversation")
+        
+        for i, msg in enumerate(messages):
+            role = msg.get("role", "unknown")
+            content = msg.get("content", "")
+            
+            if role == "user":
+                st.markdown(f"""
+                <div class="conversation-message user-message">
+                    <strong>👤 User:</strong><br>
+                    {content}
+                </div>
+                """, unsafe_allow_html=True)
+            
+            elif role == "assistant":
+                agent_name = msg.get("name", "Assistant")
+                st.markdown(f"""
+                <div class="conversation-message assistant-message">
+                    <strong>🤖 {agent_name}:</strong><br>
+                    {content}
+                </div>
+                """, unsafe_allow_html=True)
+            
+            else:
+                st.markdown(f"""
+                <div class="conversation-message system-message">
+                    <strong>⚙️ System:</strong><br>
+                    {content}
+                </div>
+                """, unsafe_allow_html=True)
+    
+    def render_history(self):
+        """Render conversation history"""
+        st.header("📚 History")
+        
+        if self.controller:
+            history = self.controller.get_recent_history(20)
+            
+            if history:
+                for entry in reversed(history):  # Show most recent first
+                    with st.expander(f"🕒 {entry['timestamp']} - {entry['function']}", expanded=False):
+                        col1, col2 = st.columns(2)
+                        
+                        with col1:
+                            st.write("**Parameters:**")
+                            st.json(entry.get("parameters", {}))
+                        
+                        with col2:
+                            st.write("**Result:**")
+                            result = entry.get("result", {})
+                            if result.get("status") == "success":
+                                st.success("✅ Success")
+                            else:
+                                st.error("❌ Error")
+                            st.json(result)
+            else:
+                st.info("No history available yet. Execute some tasks to see history here.")
+        else:
+            st.warning("Controller not initialized")
+
+# Main dashboard instance
+dashboard = KratosDashboard()
+
+async def main():
+    """Main dashboard application"""
+    # Initialize controller if not done
+    if not dashboard.initialized:
+        with st.spinner("🔄 Initializing KRATOS..."):
+            await dashboard.initialize_controller()
+    
+    # Render dashboard
+    dashboard.render_header()
+    dashboard.render_sidebar()
+    
+    # Main content tabs
+    tab1, tab2, tab3 = st.tabs(["🚀 Tasks", "📊 Monitoring", "📚 History"])
+    
+    with tab1:
+        dashboard.render_task_interface()
+    
+    with tab2:
+        st.header("📊 Cluster Monitoring")
+        
+        if dashboard.initialized and dashboard.controller:
+            # Quick health check
+            if st.button("🔍 Check Cluster Health"):
+                with st.spinner("Checking cluster health..."):
+                    try:
+                        k8s_agent = dashboard.controller.agents.get("k8s-agent")
+                        if k8s_agent:
+                            health = await k8s_agent.get_cluster_health()
+                            
+                            if health.get("status") == "success":
+                                col1, col2, col3 = st.columns(3)
+                                
+                                with col1:
+                                    st.metric(
+                                        "Health Score", 
+                                        f"{health.get('health_score', 0)}%"
+                                    )
+                                
+                                with col2:
+                                    nodes = health.get("nodes", {})
+                                    st.metric(
+                                        "Ready Nodes",
+                                        f"{nodes.get('ready', 0)}/{nodes.get('total', 0)}"
+                                    )
+                                
+                                with col3:
+                                    pods = health.get("system_pods", {})
+                                    st.metric(
+                                        "System Pods",
+                                        f"{pods.get('running', 0)}/{pods.get('total', 0)}"
+                                    )
+                                
+                                st.json(health)
+                            else:
+                                st.error(f"Health check failed: {health.get('message', 'Unknown error')}")
+                        else:
+                            st.error("K8s agent not available")
+                    except Exception as e:
+                        st.error(f"Health check error: {e}")
+        else:
+            st.warning("KRATOS not initialized. Cannot perform monitoring.")
+    
+    with tab3:
+        dashboard.render_history()
+
+# Run the dashboard
+if __name__ == "__main__":
+    # Streamlit requires running in sync mode
+    try:
+        asyncio.run(main())
+    except RuntimeError:
+        # If already in an event loop (like in Streamlit cloud)
+        asyncio.create_task(main())
