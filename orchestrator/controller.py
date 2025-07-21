@@ -98,9 +98,11 @@ class KratosController:
             self.autogen_agents["k8s-assistant"] = AssistantAgent(
                 name="k8s-assistant",
                 llm_config=self.llm_config,
-                system_message="""You are a Kubernetes expert assistant working within the KRATOS system.
+                system_message="""You are a multi-cluster Kubernetes expert assistant working within the KRATOS system.
                 
-You have access to the following Kubernetes operations:
+You have access to the following multi-cluster Kubernetes operations:
+- list_clusters: List all available Kubernetes clusters
+- switch_cluster: Switch to a different cluster context
 - get_pods: List pods in a namespace
 - restart_deployment: Restart a deployment
 - apply_yaml: Apply Kubernetes manifests
@@ -109,15 +111,17 @@ You have access to the following Kubernetes operations:
 - scale_deployment: Scale deployments up or down
 - get_logs: Get pod logs
 
-Always provide clear, actionable responses about Kubernetes operations.
+Always provide clear, actionable responses about multi-cluster Kubernetes operations.
 When asked to perform operations, use the appropriate function calls.
 Format responses in a user-friendly way with relevant details.
 
 Remember to:
-1. Ask for clarification if namespace or deployment names are not specified
-2. Provide status updates during operations
-3. Include relevant details in responses (pod counts, health scores, etc.)
-4. Suggest best practices when appropriate
+1. List available clusters when users ask about cluster operations
+2. Ask for clarification if cluster, namespace, or deployment names are not specified
+3. Provide status updates during operations
+4. Include relevant details in responses (cluster names, pod counts, health scores, etc.)
+5. Suggest best practices when appropriate
+6. When working with multiple clusters, clearly indicate which cluster you're operating on
 """,
                 function_map=function_map
             )

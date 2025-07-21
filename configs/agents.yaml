@@ -3,16 +3,19 @@ agents:
   k8s-agent:
     name: "Kubernetes Agent"
     type: "infrastructure"
-    description: "Manages Azure Kubernetes Service clusters via MCP server"
+    description: "Manages multiple Kubernetes clusters via MCP server"
     version: "1.0.0"
     enabled: true
     capabilities:
+      - "multi_cluster_management"
       - "cluster_management"
       - "pod_operations"
       - "deployment_management"
       - "monitoring"
       - "yaml_operations"
     functions:
+      - list_clusters
+      - switch_cluster
       - get_pods
       - restart_deployment
       - apply_yaml
@@ -21,9 +24,6 @@ agents:
       - scale_deployment
       - get_logs
     mcp_server: "aks-mcp"
-    authentication:
-      method: "azure_cli"
-      fallback: "managed_identity"
     timeout: 300
     retry_attempts: 3
 
@@ -44,6 +44,6 @@ global_settings:
 mcp_servers:
   aks-mcp:
     endpoint: "${AKS_MCP_ENDPOINT}"
-    type: "kubernetes"
-    authentication_required: true
+    type: "multi_cluster_kubernetes"
+    authentication_required: false
     health_check_interval: 30

@@ -1,6 +1,6 @@
 # KRATOS - Kubernetes Runtime Agentic Operating System
 
-⚡ **KRATOS** is a sophisticated multi-agent orchestration framework designed to manage Kubernetes-native infrastructure tasks through natural language interactions. Powered by Microsoft AutoGen and featuring an intuitive Streamlit interface, KRATOS enables seamless DevOps automation with intelligent agent coordination.
+⚡ **KRATOS** is a sophisticated multi-agent orchestration framework designed to manage multiple Kubernetes clusters through natural language interactions. Powered by Microsoft AutoGen and featuring an intuitive Streamlit interface, KRATOS enables seamless multi-cluster DevOps automation with intelligent agent coordination.
 
 ## 🌟 Key Features
 
@@ -10,6 +10,8 @@
 - **MCP Protocol**: Uses Model Context Protocol for secure, standardized agent communication
 
 ### k8s-agent Capabilities
+- 🌐 **Multi-Cluster Management**: Manage multiple Kubernetes clusters from a single interface
+- 🔄 **Cluster Switching**: Seamlessly switch between different cluster contexts
 - 🔍 **Cluster Monitoring**: Real-time cluster health and metrics
 - 🚀 **Deployment Management**: Start, stop, restart, and scale deployments
 - 📊 **Pod Operations**: List, inspect, and manage pods across namespaces
@@ -67,8 +69,8 @@
 ### Prerequisites
 
 - Python 3.10+
-- Azure CLI configured with appropriate permissions
-- Access to an Azure Kubernetes Service (AKS) cluster
+- kubectl configured with access to one or more Kubernetes clusters
+- Kubeconfig file with cluster contexts
 - OpenAI API key for AutoGen functionality
 
 ### Installation
@@ -92,9 +94,9 @@ cp .env.example .env
 
 4. **Set up Azure authentication:**
 ```bash
-az login
-az account set --subscription "your-subscription-id"
-az aks get-credentials --resource-group "your-rg" --name "your-cluster"
+# Configure kubectl for your clusters
+kubectl config get-contexts  # List available contexts
+kubectl config use-context your-cluster-name  # Set default context
 ```
 
 ### Configuration
@@ -102,10 +104,6 @@ az aks get-credentials --resource-group "your-rg" --name "your-cluster"
 Edit `.env` file with your settings:
 
 ```env
-# Azure Configuration
-AZURE_SUBSCRIPTION_ID=your_subscription_id
-AZURE_RESOURCE_GROUP=your_resource_group
-AZURE_AKS_CLUSTER_NAME=your_cluster_name
 
 # OpenAI Configuration
 OPENAI_API_KEY=your_openai_api_key
@@ -162,33 +160,40 @@ KRATOS> quit        # Exit
 
 | Function | Description | Example Usage |
 |----------|-------------|---------------|
-| `get_pods` | List pods in a namespace | "Show pods in staging" |
-| `restart_deployment` | Restart a deployment | "Restart nginx deployment" |
-| `apply_yaml` | Apply Kubernetes manifests | "Apply this YAML config" |
-| `get_node_metrics` | Get node resource info | "Show node metrics" |
-| `get_cluster_health` | Overall cluster health | "Check cluster health" |
-| `scale_deployment` | Scale deployment replicas | "Scale web-app to 3 replicas" |
-| `get_logs` | Retrieve pod logs | "Show logs for my-pod" |
+| `list_clusters` | List all available clusters | "Show me all clusters" |
+| `switch_cluster` | Switch to a different cluster | "Switch to production cluster" |
+| `get_pods` | List pods in a namespace/cluster | "Show pods in staging on prod-cluster" |
+| `restart_deployment` | Restart a deployment | "Restart nginx deployment in dev-cluster" |
+| `apply_yaml` | Apply Kubernetes manifests | "Apply this YAML to staging cluster" |
+| `get_node_metrics` | Get node resource info | "Show node metrics for prod-cluster" |
+| `get_cluster_health` | Overall cluster health | "Check health of dev-cluster" |
+| `scale_deployment` | Scale deployment replicas | "Scale web-app to 3 replicas in prod" |
+| `get_logs` | Retrieve pod logs | "Show logs for my-pod in staging" |
 
 ### Natural Language Examples
 
 ```bash
+# Cluster Management
+"List all available clusters"
+"Switch to the production cluster"
+"What clusters do I have access to?"
+
 # Pod Management
-"Show me all running pods in the kube-system namespace"
-"List pods that are not running in production"
+"Show me all running pods in the kube-system namespace on prod-cluster"
+"List pods that are not running in the staging cluster"
 
 # Deployment Operations
-"Restart the api-gateway deployment in staging"
-"Scale the worker deployment to 10 replicas"
+"Restart the api-gateway deployment in staging on dev-cluster"
+"Scale the worker deployment to 10 replicas in production"
 "Show status of all deployments"
 
 # Monitoring & Health
-"What's the health status of my cluster?"
-"Show me node resource usage"
-"Get recent logs from the failed pod"
+"What's the health status of my production cluster?"
+"Show me node resource usage for all clusters"
+"Get recent logs from the failed pod in staging cluster"
 
 # YAML Operations
-"Apply this deployment configuration: [YAML content]"
+"Apply this deployment configuration to dev-cluster: [YAML content]"
 "Validate this service manifest"
 ```
 
@@ -288,10 +293,10 @@ mypy kratos/
 
 ### Common Issues
 
-1. **Authentication Errors**
+1. **Cluster Access Issues**
    ```bash
-   az login
-   az aks get-credentials --resource-group RG --name CLUSTER
+   kubectl config get-contexts
+   kubectl config use-context your-cluster
    ```
 
 2. **Missing Dependencies**
@@ -308,6 +313,10 @@ mypy kratos/
    - Verify endpoint connectivity
    - Check firewall/network settings
 
+5. **Multi-Cluster Configuration**
+   - Verify kubeconfig has multiple contexts
+   - Test cluster connectivity: `kubectl cluster-info`
+   - Check cluster permissions
 ### Debug Mode
 
 Enable detailed logging:
@@ -346,7 +355,7 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 
 - **Microsoft AutoGen**: For the excellent multi-agent framework
 - **Streamlit**: For the intuitive web interface framework
-- **Azure Team**: For comprehensive Kubernetes services
+- **Kubernetes Community**: For the robust container orchestration platform
 - **MCP Protocol**: For standardized agent communication
 
 ## 📞 Support
@@ -360,4 +369,4 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 
 🚀 **Ready to revolutionize your Kubernetes operations with KRATOS!** 
 
-Start by setting up your environment, launching the dashboard, and asking your first question: *"What's the health of my cluster?"*
+Start by setting up your environment, launching the dashboard, and asking your first question: *"List all available clusters"* or *"What's the health of my production cluster?"*

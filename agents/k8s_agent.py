@@ -1,6 +1,6 @@
 """
 Kubernetes Agent for KRATOS
-Manages Azure Kubernetes Service operations via MCP integration
+Manages multiple Kubernetes clusters via MCP integration
 """
 
 import asyncio
@@ -10,12 +10,12 @@ from typing import Dict, List, Any, Optional
 from datetime import datetime
 import yaml
 
-from scripts.aks_mcp_wrapper import AKSMCPWrapper
+from scripts.aks_mcp_wrapper import MultiClusterMCPWrapper
 
 logger = logging.getLogger(__name__)
 
 class K8sAgent:
-    """Kubernetes Agent for cluster management operations"""
+    """Kubernetes Agent for multi-cluster management operations"""
     
     def __init__(self, config: Dict[str, Any]):
         self.name = "k8s-agent"
@@ -24,6 +24,7 @@ class K8sAgent:
         self.initialized = False
         self.capabilities = [
             "cluster_management",
+            "multi_cluster_operations",
             "pod_operations", 
             "deployment_management",
             "monitoring",
@@ -33,11 +34,8 @@ class K8sAgent:
     async def initialize(self) -> bool:
         """Initialize the agent with MCP wrapper"""
         try:
-            self.mcp_wrapper = AKSMCPWrapper(
-                mcp_endpoint=self.config.get("mcp_endpoint"),
-                subscription_id=self.config.get("subscription_id"),
-                resource_group=self.config.get("resource_group"),
-                cluster_name=self.config.get("cluster_name")
+            self.mcp_wrapper = MultiClusterMCPWrapper(
+                mcp_endpoint=self.config.get("mcp_endpoint")
             )
             
             self.initialized = await self.mcp_wrapper.initialize()
@@ -57,8 +55,31 @@ class K8sAgent:
         """Return function definitions for AutoGen"""
         return [
             {
+                "name": "list_clusters",
+                "description": "List all available Kubernetes clusters",
+                "parameters": {
+                    "type": "object",
+                    "properties": {},
+                    "required": []
+                }
+            },
+            {
+                "name": "switch_cluster",
+                "description": "Switch to a different Kubernetes cluster",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "cluster_name": {
+                            "type": "string",
+                            "description": "Name of the cluster to switch to"
+                        }
+                    },
+                    "required": ["cluster_name"]
+                }
+            },
+            {
                 "name": "get_pods",
-                "description": "Get all pods in a specified namespace",
+                "description": "Get all pods in a specified namespace and cluster",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -66,6 +87,10 @@ class K8sAgent:
                             "type": "string",
                             "description": "Kubernetes namespace",
                             "default": "default"
+                        },
+                        "cluster": {
+                            "type": "string",
+                            "description": "Kubernetes cluster name (optional)"
                         }
                     },
                     "required": []
@@ -73,7 +98,7 @@ class K8sAgent:
             },
             {
                 "name": "restart_deployment", 
-                "description": "Restart a deployment in a specified namespace",
+                "description": "Restart a deployment in a specified namespace and cluster",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -85,6 +110,10 @@ class K8sAgent:
                         "deployment_name": {
                             "type": "string",
                             "description": "Name of the deployment to restart"
+                        },
+                        "cluster": {
+                            "type": "string",
+                            "description": "Kubernetes cluster name (optional)"
                         }
                     },
                     "required": ["deployment_name"]
@@ -92,13 +121,17 @@ class K8sAgent:
             },
             {
                 "name": "apply_yaml",
-                "description": "Apply Kubernetes YAML manifest to the cluster",
+                "description": "Apply Kubernetes YAML manifest to a cluster",
                 "parameters": {
                     "type": "object", 
                     "properties": {
                         "yaml_content": {
                             "type": "string",
                             "description": "YAML manifest content to apply"
+                        },
+                        "cluster": {
+                            "type": "string",
+                            "description": "Kubernetes cluster name (optional)"
                         }
                     },
                     "required": ["yaml_content"]
@@ -106,25 +139,35 @@ class K8sAgent:
             },
             {
                 "name": "get_node_metrics",
-                "description": "Get node metrics and resource information",
+                "description": "Get node metrics and resource information for a cluster",
                 "parameters": {
                     "type": "object",
-                    "properties": {},
+                    "properties": {
+                        "cluster": {
+                            "type": "string",
+                            "description": "Kubernetes cluster name (optional)"
+                        }
+                    },
                     "required": []
                 }
             },
             {
                 "name": "get_cluster_health",
-                "description": "Get overall cluster health and status information", 
+                "description": "Get overall cluster health and status information for a cluster", 
                 "parameters": {
                     "type": "object",
-                    "properties": {},
+                    "properties": {
+                        "cluster": {
+                            "type": "string",
+                            "description": "Kubernetes cluster name (optional)"
+                        }
+                    },
                     "required": []
                 }
             },
             {
                 "name": "scale_deployment",
-                "description": "Scale a deployment to specified number of replicas",
+                "description": "Scale a deployment to specified number of replicas in a cluster",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -141,6 +184,10 @@ class K8sAgent:
                             "type": "integer",
                             "description": "Number of replicas to scale to",
                             "minimum": 0
+                        },
+                        "cluster": {
+                            "type": "string",
+                            "description": "Kubernetes cluster name (optional)"
                         }
                     },
                     "required": ["deployment_name", "replicas"]
@@ -148,7 +195,7 @@ class K8sAgent:
             },
             {
                 "name": "get_logs",
-                "description": "Get logs from a pod",
+                "description": "Get logs from a pod in a cluster",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -169,6 +216,10 @@ class K8sAgent:
                             "type": "integer",
                             "description": "Number of lines to tail",
                             "default": 100
+                        },
+                        "cluster": {
+                            "type": "string",
+                            "description": "Kubernetes cluster name (optional)"
                         }
                     },
                     "required": ["pod_name"]
@@ -187,6 +238,8 @@ class K8sAgent:
         try:
             # Map function names to methods
             function_map = {
+                "list_clusters": self.list_clusters,
+                "switch_cluster": self.switch_cluster,
                 "get_pods": self.get_pods,
                 "restart_deployment": self.restart_deployment,
                 "apply_yaml": self.apply_yaml, 
@@ -220,35 +273,55 @@ class K8sAgent:
                 "function": function_name
             }
     
-    async def get_pods(self, namespace: str = "default") -> Dict[str, Any]:
+    async def list_clusters(self) -> Dict[str, Any]:
+        """List available clusters"""
+        clusters = await self.mcp_wrapper.list_clusters()
+        return {
+            "status": "success",
+            "cluster_count": len(clusters),
+            "clusters": clusters
+        }
+    
+    async def switch_cluster(self, cluster_name: str) -> Dict[str, Any]:
+        """Switch to a different cluster"""
+        return await self.mcp_wrapper.switch_cluster(cluster_name)
+    
+    async def get_pods(self, namespace: str = "default", cluster: Optional[str] = None) -> Dict[str, Any]:
         """Get pods in a namespace"""
-        pods = await self.mcp_wrapper.get_pods(namespace)
+        pods = await self.mcp_wrapper.get_pods(namespace, cluster)
         return {
             "status": "success",
             "namespace": namespace,
+            "cluster": cluster or self.mcp_wrapper.current_cluster,
             "pod_count": len(pods),
             "pods": pods
         }
     
-    async def restart_deployment(self, deployment_name: str, namespace: str = "default") -> Dict[str, Any]:
+    async def restart_deployment(self, deployment_name: str, namespace: str = "default", cluster: Optional[str] = None) -> Dict[str, Any]:
         """Restart a deployment"""
-        return await self.mcp_wrapper.restart_deployment(namespace, deployment_name)
+        return await self.mcp_wrapper.restart_deployment(namespace, deployment_name, cluster)
     
-    async def apply_yaml(self, yaml_content: str) -> Dict[str, Any]:
+    async def apply_yaml(self, yaml_content: str, cluster: Optional[str] = None) -> Dict[str, Any]:
         """Apply YAML manifest"""
-        return await self.mcp_wrapper.apply_yaml(yaml_content)
+        return await self.mcp_wrapper.apply_yaml(yaml_content, cluster)
     
-    async def get_node_metrics(self) -> Dict[str, Any]:
+    async def get_node_metrics(self, cluster: Optional[str] = None) -> Dict[str, Any]:
         """Get node metrics"""
-        return await self.mcp_wrapper.get_node_metrics()
+        return await self.mcp_wrapper.get_node_metrics(cluster)
     
-    async def get_cluster_health(self) -> Dict[str, Any]:
+    async def get_cluster_health(self, cluster: Optional[str] = None) -> Dict[str, Any]:
         """Get cluster health"""
-        return await self.mcp_wrapper.get_cluster_health()
+        return await self.mcp_wrapper.get_cluster_health(cluster)
     
-    async def scale_deployment(self, deployment_name: str, replicas: int, namespace: str = "default") -> Dict[str, Any]:
+    async def scale_deployment(self, deployment_name: str, replicas: int, namespace: str = "default", cluster: Optional[str] = None) -> Dict[str, Any]:
         """Scale a deployment"""
         try:
+            # Switch cluster if specified
+            if cluster and cluster != self.mcp_wrapper.current_cluster:
+                switch_result = await self.mcp_wrapper.switch_cluster(cluster)
+                if switch_result["status"] != "success":
+                    return switch_result
+            
             from kubernetes import client
             apps_v1 = client.AppsV1Api()
             
@@ -265,6 +338,7 @@ class K8sAgent:
                 "message": f"Deployment {deployment_name} scaled to {replicas} replicas",
                 "deployment": deployment_name,
                 "namespace": namespace,
+                "cluster": cluster or self.mcp_wrapper.current_cluster,
                 "replicas": replicas
             }
             
@@ -274,13 +348,20 @@ class K8sAgent:
                 "status": "error", 
                 "message": str(e),
                 "deployment": deployment_name,
-                "namespace": namespace
+                "namespace": namespace,
+                "cluster": cluster or self.mcp_wrapper.current_cluster
             }
     
     async def get_logs(self, pod_name: str, namespace: str = "default", 
-                      container_name: Optional[str] = None, tail_lines: int = 100) -> Dict[str, Any]:
+                      container_name: Optional[str] = None, tail_lines: int = 100, cluster: Optional[str] = None) -> Dict[str, Any]:
         """Get pod logs"""
         try:
+            # Switch cluster if specified
+            if cluster and cluster != self.mcp_wrapper.current_cluster:
+                switch_result = await self.mcp_wrapper.switch_cluster(cluster)
+                if switch_result["status"] != "success":
+                    return switch_result
+            
             from kubernetes import client
             v1 = client.CoreV1Api()
             
@@ -295,6 +376,7 @@ class K8sAgent:
                 "status": "success",
                 "pod": pod_name,
                 "namespace": namespace,
+                "cluster": cluster or self.mcp_wrapper.current_cluster,
                 "container": container_name,
                 "lines": tail_lines,
                 "logs": logs
@@ -306,15 +388,25 @@ class K8sAgent:
                 "status": "error",
                 "message": str(e),
                 "pod": pod_name,
-                "namespace": namespace
+                "namespace": namespace,
+                "cluster": cluster or self.mcp_wrapper.current_cluster
             }
 
     def get_status(self) -> Dict[str, Any]:
         """Get agent status"""
+        cluster_info = {}
+        if self.mcp_wrapper:
+            cluster_info = {
+                "current_cluster": self.mcp_wrapper.current_cluster,
+                "available_clusters": list(self.mcp_wrapper.clusters.keys())
+            }
+        
         return {
             "name": self.name,
             "initialized": self.initialized,
             "capabilities": self.capabilities,
-            "config": {k: "***" if "secret" in k.lower() or "key" in k.lower() else v 
-                      for k, v in self.config.items()}
+            "cluster_info": cluster_info,
+            "config": {
+                "mcp_endpoint": self.config.get("mcp_endpoint", "not configured")
+            }
         }

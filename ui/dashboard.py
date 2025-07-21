@@ -12,6 +12,8 @@ from datetime import datetime
 from typing import Dict, Any, Optional
 import os
 import sys
+import threading
+import time
 
 # Add project root to path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -131,10 +133,7 @@ class KratosDashboard:
             # Agent configurations
             "agents": {
                 "k8s-agent": {
-                    "mcp_endpoint": os.getenv("AKS_MCP_ENDPOINT", "http://localhost:3000"),
-                    "subscription_id": os.getenv("AZURE_SUBSCRIPTION_ID", ""),
-                    "resource_group": os.getenv("AZURE_RESOURCE_GROUP", ""),
-                    "cluster_name": os.getenv("AZURE_AKS_CLUSTER_NAME", ""),
+                    "mcp_endpoint": os.getenv("AKS_MCP_ENDPOINT", "http://localhost:3000")
                 }
             }
         }
@@ -174,6 +173,17 @@ class KratosDashboard:
                 st.info("⚙️ Standby")
         
         with col4:
+            if self.controller and self.controller.agents.get("k8s-agent"):
+                k8s_agent = self.controller.agents["k8s-agent"]
+                if hasattr(k8s_agent, 'mcp_wrapper') and k8s_agent.mcp_wrapper:
+                    current_cluster = k8s_agent.mcp_wrapper.current_cluster
+                    if current_cluster:
+                        st.info(f"🎯 {current_cluster}")
+                    else:
+                        st.warning("🎯 No Cluster")
+                else:
+                    st.warning("🎯 Not Connected")
+            else:
             current_time = datetime.now().strftime("%H:%M:%S")
             st.info(f"🕒 {current_time}")
     
@@ -193,6 +203,19 @@ class KratosDashboard:
                             st.success("Status: Online")
                         else:
                             st.error("Status: Offline")
+                        
+                        # Show cluster information for k8s-agent
+                        if agent_name == "k8s-agent" and "cluster_info" in agent_info:
+                            cluster_info = agent_info["cluster_info"]
+                            st.write("**Current Cluster:**", cluster_info.get("current_cluster", "None"))
+                            
+                            available_clusters = cluster_info.get("available_clusters", [])
+                            if available_clusters:
+                                st.write("**Available Clusters:**")
+                                for cluster in available_clusters:
+                                    st.write(f"• {cluster}")
+                            else:
+                                st.write("**Available Clusters:** None configured")
                         
                         st.write("**Capabilities:**")
                         for cap in agent_info.get("capabilities", []):
@@ -216,9 +239,7 @@ class KratosDashboard:
             
             # Environment check
             env_vars = [
-                "AZURE_SUBSCRIPTION_ID",
-                "AZURE_RESOURCE_GROUP", 
-                "AZURE_AKS_CLUSTER_NAME",
+                "AKS_MCP_ENDPOINT",
                 "OPENAI_API_KEY"
             ]
             
@@ -240,10 +261,10 @@ class KratosDashboard:
             with col1:
                 # Message input
                 user_message = st.text_area(
-                    "Enter your Kubernetes task:",
-                    placeholder="e.g., 'Show me all pods in the default namespace' or 'Restart the nginx deployment in staging'",
+                    "Enter your multi-cluster Kubernetes task:",
+                    placeholder="e.g., 'List all available clusters' or 'Show me all pods in the default namespace' or 'Restart the nginx deployment in staging on cluster-prod'",
                     height=100,
-                    help="Describe what you want to do with your Kubernetes cluster"
+                    help="Describe what you want to do with your Kubernetes clusters"
                 )
             
             with col2:
@@ -275,7 +296,68 @@ class KratosDashboard:
         
         # Execute task
         if execute_button and user_message.strip():
-            await self._execute_task(user_message, selected_agent)
+            self._execute_task_sync(user_message, selected_agent)
+    
+    def _execute_task_sync(self, message: str, selected_agent: Optional[str]):
+        """Execute task synchronously for Streamlit"""
+        with st.spinner("🔄 Processing task..."):
+            try:
+                # Run the async task in a thread
+                result = self._run_async_task(message, selected_agent)
+                
+                if result.get("status") == "success":
+                    st.success("✅ Task completed successfully!")
+                    
+                    # Display results
+                    task_result = result.get("result", {})
+                    
+                    # Show conversation
+                    if "messages" in task_result:
+                        self._display_conversation(task_result["messages"])
+                    
+                    # Show summary
+                    if "summary" in task_result:
+                        st.info(f"📋 **Summary:** {task_result['summary']}")
+                    
+                    # Show raw result for debugging
+                    with st.expander("🔍 Raw Result", expanded=False):
+                        st.json(task_result)
+                
+                else:
+                    st.error(f"❌ Task failed: {result.get('message', 'Unknown error')}")
+                    
+            except Exception as e:
+                st.error(f"❌ Error executing task: {e}")
+                logger.error(f"Task execution error: {e}")
+    
+    def _run_async_task(self, message: str, selected_agent: Optional[str]) -> Dict[str, Any]:
+        """Run async task in a separate thread"""
+        result = {}
+        exception = None
+        
+        def run_task():
+            nonlocal result, exception
+            try:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                result = loop.run_until_complete(
+                    self.controller.process_user_message(message, selected_agent)
+                )
+                loop.close()
+            except Exception as e:
+                exception = e
+        
+        thread = threading.Thread(target=run_task)
+        thread.start()
+        thread.join(timeout=120)  # 2 minute timeout
+        
+        if thread.is_alive():
+            return {"status": "error", "message": "Task timed out"}
+        
+        if exception:
+            raise exception
+            
+        return result
     
     async def _execute_task(self, message: str, selected_agent: Optional[str]):
         """Execute a task and display results"""
@@ -374,12 +456,22 @@ class KratosDashboard:
 # Main dashboard instance
 dashboard = KratosDashboard()
 
-async def main():
+def main():
     """Main dashboard application"""
     # Initialize controller if not done
     if not dashboard.initialized:
         with st.spinner("🔄 Initializing KRATOS..."):
-            await dashboard.initialize_controller()
+            # Run initialization in a thread
+            def init_controller():
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                result = loop.run_until_complete(dashboard.initialize_controller())
+                loop.close()
+                return result
+            
+            init_thread = threading.Thread(target=init_controller)
+            init_thread.start()
+            init_thread.join()
     
     # Render dashboard
     dashboard.render_header()
@@ -395,44 +487,64 @@ async def main():
         st.header("📊 Cluster Monitoring")
         
         if dashboard.initialized and dashboard.controller:
+            # Cluster selection for monitoring
+            k8s_agent = dashboard.controller.agents.get("k8s-agent")
+            if k8s_agent and hasattr(k8s_agent, 'mcp_wrapper') and k8s_agent.mcp_wrapper:
+                available_clusters = list(k8s_agent.mcp_wrapper.clusters.keys())
+                if available_clusters:
+                    selected_cluster = st.selectbox(
+                        "Select cluster to monitor:",
+                        available_clusters,
+                        index=available_clusters.index(k8s_agent.mcp_wrapper.current_cluster) if k8s_agent.mcp_wrapper.current_cluster in available_clusters else 0
+                    )
+                else:
+                    st.warning("No clusters available for monitoring")
+                    selected_cluster = None
+            else:
+                selected_cluster = None
+            
             # Quick health check
-            if st.button("🔍 Check Cluster Health"):
+            if st.button("🔍 Check Cluster Health") and selected_cluster:
                 with st.spinner("Checking cluster health..."):
-                    try:
-                        k8s_agent = dashboard.controller.agents.get("k8s-agent")
-                        if k8s_agent:
-                            health = await k8s_agent.get_cluster_health()
+                    def check_health():
+                        try:
+                            loop = asyncio.new_event_loop()
+                            asyncio.set_event_loop(loop)
+                            health = loop.run_until_complete(k8s_agent.get_cluster_health(selected_cluster))
+                            loop.close()
+                            return health
+                        except Exception as e:
+                            return {"status": "error", "message": str(e)}
+                    
+                    health = check_health()
+                    
+                    if health.get("status") == "success":
+                        col1, col2, col3 = st.columns(3)
+                        
+                        with col1:
+                            st.metric(
+                                "Health Score", 
+                                f"{health.get('health_score', 0)}%"
+                            )
+                        
+                        with col2:
+                            nodes = health.get("nodes", {})
+                            st.metric(
+                                "Ready Nodes",
+                                f"{nodes.get('ready', 0)}/{nodes.get('total', 0)}"
+                            )
+                        
+                        with col3:
+                            pods = health.get("system_pods", {})
+                            st.metric(
+                                "System Pods",
+                                f"{pods.get('running', 0)}/{pods.get('total', 0)}"
+                            )
+                        
+                        st.json(health)
+                    else:
+                        st.error(f"Health check failed: {health.get('message', 'Unknown error')}")
                             
-                            if health.get("status") == "success":
-                                col1, col2, col3 = st.columns(3)
-                                
-                                with col1:
-                                    st.metric(
-                                        "Health Score", 
-                                        f"{health.get('health_score', 0)}%"
-                                    )
-                                
-                                with col2:
-                                    nodes = health.get("nodes", {})
-                                    st.metric(
-                                        "Ready Nodes",
-                                        f"{nodes.get('ready', 0)}/{nodes.get('total', 0)}"
-                                    )
-                                
-                                with col3:
-                                    pods = health.get("system_pods", {})
-                                    st.metric(
-                                        "System Pods",
-                                        f"{pods.get('running', 0)}/{pods.get('total', 0)}"
-                                    )
-                                
-                                st.json(health)
-                            else:
-                                st.error(f"Health check failed: {health.get('message', 'Unknown error')}")
-                        else:
-                            st.error("K8s agent not available")
-                    except Exception as e:
-                        st.error(f"Health check error: {e}")
         else:
             st.warning("KRATOS not initialized. Cannot perform monitoring.")
     
@@ -441,9 +553,4 @@ async def main():
 
 # Run the dashboard
 if __name__ == "__main__":
-    # Streamlit requires running in sync mode
-    try:
-        asyncio.run(main())
-    except RuntimeError:
-        # If already in an event loop (like in Streamlit cloud)
-        asyncio.create_task(main())
+    main()

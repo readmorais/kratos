@@ -47,16 +47,6 @@ def load_configuration() -> dict:
         "timeout": int(os.getenv("AUTOGEN_TIMEOUT", "120")),
         "max_round": int(os.getenv("AUTOGEN_MAX_ROUND", "10")),
         
-        # Azure configuration
-        "azure": {
-            "subscription_id": os.getenv("AZURE_SUBSCRIPTION_ID", ""),
-            "tenant_id": os.getenv("AZURE_TENANT_ID", ""),
-            "client_id": os.getenv("AZURE_CLIENT_ID", ""),
-            "client_secret": os.getenv("AZURE_CLIENT_SECRET", ""),
-            "resource_group": os.getenv("AZURE_RESOURCE_GROUP", ""),
-            "cluster_name": os.getenv("AZURE_AKS_CLUSTER_NAME", ""),
-        },
-        
         # MCP configuration
         "mcp": {
             "server_host": os.getenv("MCP_SERVER_HOST", "localhost"),
@@ -68,9 +58,6 @@ def load_configuration() -> dict:
         "agents": {
             "k8s-agent": {
                 "mcp_endpoint": os.getenv("AKS_MCP_ENDPOINT", "http://localhost:3000"),
-                "subscription_id": os.getenv("AZURE_SUBSCRIPTION_ID", ""),
-                "resource_group": os.getenv("AZURE_RESOURCE_GROUP", ""),
-                "cluster_name": os.getenv("AZURE_AKS_CLUSTER_NAME", ""),
                 "timeout": int(os.getenv("AGENT_TIMEOUT", "300")),
                 "retry_attempts": int(os.getenv("AGENT_RETRY_ATTEMPTS", "3")),
             }
@@ -163,12 +150,14 @@ System Commands:
   quit/exit/q - Exit KRATOS
 
 Task Examples:
+  "List all available clusters"
+  "Switch to production cluster"
   "Show me all pods in the default namespace"
-  "Restart the nginx deployment in staging" 
-  "Get cluster health status"
-  "Scale the web-app deployment to 5 replicas"
-  "Show logs for pod my-pod-name"
-  "Get node metrics and resource usage"
+  "Restart the nginx deployment in staging on cluster-prod" 
+  "Get cluster health status for dev-cluster"
+  "Scale the web-app deployment to 5 replicas in production"
+  "Show logs for pod my-pod-name in staging cluster"
+  "Get node metrics for all clusters"
 
 Agent Operations:
   All natural language requests are processed by the AutoGen system
@@ -200,14 +189,10 @@ async def main():
         logger.error("Please set your OpenAI API key in the .env file or environment")
         sys.exit(1)
     
-    azure_config = config["azure"]
-    required_azure_vars = ["subscription_id", "resource_group", "cluster_name"]
-    missing_vars = [var for var in required_azure_vars if not azure_config.get(var)]
-    
-    if missing_vars:
-        logger.error(f"❌ Missing required Azure configuration: {', '.join(missing_vars)}")
-        logger.error("Please check your .env file or environment variables")
-        sys.exit(1)
+    # Check if MCP endpoint is configured
+    mcp_endpoint = config["agents"]["k8s-agent"].get("mcp_endpoint")
+    if not mcp_endpoint or mcp_endpoint == "http://localhost:3000":
+        logger.warning("⚠️  Using default MCP endpoint. Configure AKS_MCP_ENDPOINT for production use.")
     
     logger.info("✅ Configuration loaded successfully")
     

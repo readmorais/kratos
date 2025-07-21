@@ -1,6 +1,6 @@
 """
 AKS MCP Server Wrapper
-Provides interface to Azure Kubernetes Service via MCP protocol
+Provides interface to multiple Kubernetes clusters via MCP protocol
 """
 
 import asyncio
@@ -10,62 +10,104 @@ from typing import Dict, List, Optional, Any
 import httpx
 import yaml
 from kubernetes import client, config
-from azure.identity import DefaultAzureCredential, AzureCliCredential
-from azure.mgmt.containerservice import ContainerServiceClient
+from kubernetes.config import ConfigException
 
 logger = logging.getLogger(__name__)
 
-class AKSMCPWrapper:
-    """Wrapper for AKS MCP server interactions"""
+class MultiClusterMCPWrapper:
+    """Wrapper for multi-cluster MCP server interactions"""
     
-    def __init__(self, mcp_endpoint: str, subscription_id: str, resource_group: str, cluster_name: str):
+    def __init__(self, mcp_endpoint: str):
         self.mcp_endpoint = mcp_endpoint.rstrip('/')
-        self.subscription_id = subscription_id
-        self.resource_group = resource_group
-        self.cluster_name = cluster_name
-        self.credential = None
-        self.k8s_client = None
-        self.aks_client = None
+        self.clusters = {}
+        self.current_cluster = None
         
     async def initialize(self) -> bool:
-        """Initialize Azure credentials and Kubernetes client"""
+        """Initialize available clusters"""
         try:
-            # Try Azure CLI credential first, fallback to default
+            # Try to load kubeconfig and get available contexts
             try:
-                self.credential = AzureCliCredential()
-                # Test the credential
-                token = self.credential.get_token("https://management.azure.com/.default")
-                logger.info("Successfully authenticated with Azure CLI")
-            except Exception as e:
-                logger.warning(f"Azure CLI authentication failed: {e}")
-                self.credential = DefaultAzureCredential()
-                logger.info("Using default Azure credential")
-            
-            # Initialize AKS management client
-            self.aks_client = ContainerServiceClient(self.credential, self.subscription_id)
-            
-            # Get AKS credentials and configure kubectl
-            credentials = self.aks_client.managed_clusters.list_cluster_user_credentials(
-                self.resource_group, self.cluster_name
-            )
-            
-            if credentials.kubeconfigs:
-                kubeconfig = credentials.kubeconfigs[0].value.decode('utf-8')
-                config.load_kube_config_from_dict(yaml.safe_load(kubeconfig))
-                self.k8s_client = client.ApiClient()
-                logger.info("Successfully initialized Kubernetes client")
-                return True
-            else:
-                logger.error("No kubeconfig found for cluster")
-                return False
+                contexts, active_context = config.list_kube_config_contexts()
+                
+                for context in contexts:
+                    cluster_name = context['name']
+                    self.clusters[cluster_name] = {
+                        'context': context,
+                        'active': context == active_context
+                    }
+                    
+                    if context == active_context:
+                        self.current_cluster = cluster_name
+                
+                logger.info(f"Initialized {len(self.clusters)} clusters")
+                logger.info(f"Available clusters: {list(self.clusters.keys())}")
+                logger.info(f"Current cluster: {self.current_cluster}")
+                
+                return len(self.clusters) > 0
+                
+            except ConfigException as e:
+                logger.warning(f"No kubeconfig found: {e}")
+                # Try to connect to MCP server directly
+                return await self._test_mcp_connection()
                 
         except Exception as e:
-            logger.error(f"Failed to initialize AKS MCP wrapper: {e}")
+            logger.error(f"Failed to initialize multi-cluster wrapper: {e}")
             return False
+    
+    async def _test_mcp_connection(self) -> bool:
+        """Test connection to MCP server"""
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.get(f"{self.mcp_endpoint}/health", timeout=10.0)
+                return response.status_code == 200
+        except Exception as e:
+            logger.error(f"MCP connection test failed: {e}")
+            return False
+    
+    async def list_clusters(self) -> List[Dict[str, Any]]:
+        """List available clusters"""
+        cluster_list = []
+        for name, info in self.clusters.items():
+            cluster_list.append({
+                "name": name,
+                "active": info.get("active", False),
+                "context": info["context"]["context"]
+            })
+        return cluster_list
+    
+    async def switch_cluster(self, cluster_name: str) -> Dict[str, Any]:
+        """Switch to a different cluster context"""
+        try:
+            if cluster_name not in self.clusters:
+                return {
+                    "status": "error",
+                    "message": f"Cluster '{cluster_name}' not found. Available: {list(self.clusters.keys())}"
+                }
+            
+            # Load the specific context
+            config.load_kube_config(context=cluster_name)
+            self.current_cluster = cluster_name
+            
+            return {
+                "status": "success",
+                "message": f"Switched to cluster '{cluster_name}'",
+                "cluster": cluster_name
+            }
+            
+        except Exception as e:
+            logger.error(f"Failed to switch cluster: {e}")
+            return {
+                "status": "error",
+                "message": str(e)
+            }
     
     async def mcp_request(self, method: str, params: Dict[str, Any]) -> Dict[str, Any]:
         """Make a request to the MCP server"""
         try:
+            # Add current cluster context to params
+            if self.current_cluster:
+                params["cluster"] = self.current_cluster
+            
             async with httpx.AsyncClient() as client:
                 response = await client.post(
                     f"{self.mcp_endpoint}/mcp",
@@ -83,9 +125,15 @@ class AKSMCPWrapper:
             logger.error(f"MCP request failed: {e}")
             return {"error": str(e)}
     
-    async def get_pods(self, namespace: str = "default") -> List[Dict[str, Any]]:
+    async def get_pods(self, namespace: str = "default", cluster: Optional[str] = None) -> List[Dict[str, Any]]:
         """Get pods in a namespace"""
         try:
+            # Switch cluster if specified
+            if cluster and cluster != self.current_cluster:
+                switch_result = await self.switch_cluster(cluster)
+                if switch_result["status"] != "success":
+                    return []
+            
             v1 = client.CoreV1Api()
             pods = v1.list_namespaced_pod(namespace=namespace)
             
@@ -94,6 +142,7 @@ class AKSMCPWrapper:
                 pod_info = {
                     "name": pod.metadata.name,
                     "namespace": pod.metadata.namespace,
+                    "cluster": self.current_cluster,
                     "status": pod.status.phase,
                     "node": pod.spec.node_name,
                     "created": pod.metadata.creation_timestamp.isoformat() if pod.metadata.creation_timestamp else None,
@@ -108,16 +157,22 @@ class AKSMCPWrapper:
                 }
                 pod_list.append(pod_info)
             
-            logger.info(f"Retrieved {len(pod_list)} pods from namespace {namespace}")
+            logger.info(f"Retrieved {len(pod_list)} pods from namespace {namespace} in cluster {self.current_cluster}")
             return pod_list
             
         except Exception as e:
             logger.error(f"Failed to get pods: {e}")
             return []
     
-    async def restart_deployment(self, namespace: str, deployment_name: str) -> Dict[str, Any]:
+    async def restart_deployment(self, namespace: str, deployment_name: str, cluster: Optional[str] = None) -> Dict[str, Any]:
         """Restart a deployment"""
         try:
+            # Switch cluster if specified
+            if cluster and cluster != self.current_cluster:
+                switch_result = await self.switch_cluster(cluster)
+                if switch_result["status"] != "success":
+                    return switch_result
+            
             apps_v1 = client.AppsV1Api()
             
             # Get current deployment
@@ -146,10 +201,11 @@ class AKSMCPWrapper:
                 "message": f"Deployment {deployment_name} restarted in namespace {namespace}",
                 "deployment": deployment_name,
                 "namespace": namespace,
+                "cluster": self.current_cluster,
                 "timestamp": datetime.datetime.utcnow().isoformat()
             }
             
-            logger.info(f"Successfully restarted deployment {deployment_name}")
+            logger.info(f"Successfully restarted deployment {deployment_name} in cluster {self.current_cluster}")
             return result
             
         except Exception as e:
@@ -158,12 +214,19 @@ class AKSMCPWrapper:
                 "status": "error",
                 "message": str(e),
                 "deployment": deployment_name,
-                "namespace": namespace
+                "namespace": namespace,
+                "cluster": self.current_cluster
             }
     
-    async def apply_yaml(self, yaml_content: str) -> Dict[str, Any]:
+    async def apply_yaml(self, yaml_content: str, cluster: Optional[str] = None) -> Dict[str, Any]:
         """Apply YAML manifest to cluster"""
         try:
+            # Switch cluster if specified
+            if cluster and cluster != self.current_cluster:
+                switch_result = await self.switch_cluster(cluster)
+                if switch_result["status"] != "success":
+                    return switch_result
+            
             docs = yaml.safe_load_all(yaml_content)
             results = []
             
@@ -183,11 +246,11 @@ class AKSMCPWrapper:
                     apps_v1 = client.AppsV1Api()
                     try:
                         apps_v1.create_namespaced_deployment(namespace=namespace, body=doc)
-                        results.append({"resource": f"{kind}/{name}", "action": "created"})
+                        results.append({"resource": f"{kind}/{name}", "action": "created", "cluster": self.current_cluster})
                     except client.ApiException as e:
                         if e.status == 409:  # Already exists
                             apps_v1.patch_namespaced_deployment(name=name, namespace=namespace, body=doc)
-                            results.append({"resource": f"{kind}/{name}", "action": "updated"})
+                            results.append({"resource": f"{kind}/{name}", "action": "updated", "cluster": self.current_cluster})
                         else:
                             raise
                             
@@ -195,17 +258,18 @@ class AKSMCPWrapper:
                     v1 = client.CoreV1Api()
                     try:
                         v1.create_namespaced_service(namespace=namespace, body=doc)
-                        results.append({"resource": f"{kind}/{name}", "action": "created"})
+                        results.append({"resource": f"{kind}/{name}", "action": "created", "cluster": self.current_cluster})
                     except client.ApiException as e:
                         if e.status == 409:
                             v1.patch_namespaced_service(name=name, namespace=namespace, body=doc)
-                            results.append({"resource": f"{kind}/{name}", "action": "updated"})
+                            results.append({"resource": f"{kind}/{name}", "action": "updated", "cluster": self.current_cluster})
                         else:
                             raise
             
             return {
                 "status": "success",
-                "message": f"Applied {len(results)} resources",
+                "message": f"Applied {len(results)} resources to cluster {self.current_cluster}",
+                "cluster": self.current_cluster,
                 "results": results
             }
             
@@ -213,12 +277,19 @@ class AKSMCPWrapper:
             logger.error(f"Failed to apply YAML: {e}")
             return {
                 "status": "error",
-                "message": str(e)
+                "message": str(e),
+                "cluster": self.current_cluster
             }
     
-    async def get_node_metrics(self) -> Dict[str, Any]:
+    async def get_node_metrics(self, cluster: Optional[str] = None) -> Dict[str, Any]:
         """Get node metrics and health information"""
         try:
+            # Switch cluster if specified
+            if cluster and cluster != self.current_cluster:
+                switch_result = await self.switch_cluster(cluster)
+                if switch_result["status"] != "success":
+                    return switch_result
+            
             v1 = client.CoreV1Api()
             nodes = v1.list_node()
             
@@ -226,6 +297,7 @@ class AKSMCPWrapper:
             for node in nodes.items:
                 node_info = {
                     "name": node.metadata.name,
+                    "cluster": self.current_cluster,
                     "status": "Ready" if any(condition.type == "Ready" and condition.status == "True" 
                                            for condition in node.status.conditions) else "NotReady",
                     "version": node.status.node_info.kubelet_version,
@@ -247,6 +319,7 @@ class AKSMCPWrapper:
             
             return {
                 "status": "success",
+                "cluster": self.current_cluster,
                 "node_count": len(node_metrics),
                 "nodes": node_metrics
             }
@@ -255,17 +328,18 @@ class AKSMCPWrapper:
             logger.error(f"Failed to get node metrics: {e}")
             return {
                 "status": "error",
-                "message": str(e)
+                "message": str(e),
+                "cluster": self.current_cluster
             }
     
-    async def get_cluster_health(self) -> Dict[str, Any]:
+    async def get_cluster_health(self, cluster: Optional[str] = None) -> Dict[str, Any]:
         """Get overall cluster health status"""
         try:
-            # Get cluster info
-            cluster_info = self.aks_client.managed_clusters.get(
-                self.resource_group, 
-                self.cluster_name
-            )
+            # Switch cluster if specified
+            if cluster and cluster != self.current_cluster:
+                switch_result = await self.switch_cluster(cluster)
+                if switch_result["status"] != "success":
+                    return switch_result
             
             # Get node status
             node_metrics = await self.get_node_metrics()
@@ -287,9 +361,7 @@ class AKSMCPWrapper:
             
             return {
                 "status": "success",
-                "cluster_name": self.cluster_name,
-                "cluster_status": cluster_info.provisioning_state,
-                "kubernetes_version": cluster_info.kubernetes_version,
+                "cluster_name": self.current_cluster,
                 "health_score": round(health_score, 2),
                 "nodes": {
                     "ready": ready_nodes,
@@ -305,5 +377,6 @@ class AKSMCPWrapper:
             logger.error(f"Failed to get cluster health: {e}")
             return {
                 "status": "error",
-                "message": str(e)
+                "message": str(e),
+                "cluster": self.current_cluster
             }
