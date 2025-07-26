@@ -34,14 +34,29 @@ def load_configuration() -> dict:
     # Load environment variables
     load_dotenv()
     
+    # Validate critical environment variables
+    azure_api_key = os.getenv("AZURE_OPENAI_API_KEY", "")
+    azure_endpoint = os.getenv("AZURE_OPENAI_ENDPOINT", "")
+    
+    if not azure_api_key:
+        logger.error("❌ AZURE_OPENAI_API_KEY not found in environment variables")
+        logger.error("Please set your Azure OpenAI API key in the .env file")
+        return None
+    
+    if not azure_endpoint:
+        logger.error("❌ AZURE_OPENAI_ENDPOINT not found in environment variables")
+        logger.error("Please set your Azure OpenAI endpoint in the .env file")
+        logger.error("Example: AZURE_OPENAI_ENDPOINT=https://your-resource-name.openai.azure.com")
+        return None
+    
     config = {
         # System configuration
         "version": "1.0.0",
         "environment": os.getenv("KRATOS_ENV", "development"),
         
         # Azure OpenAI configuration
-        "azure_openai_api_key": os.getenv("AZURE_OPENAI_API_KEY", ""),
-        "azure_openai_endpoint": os.getenv("AZURE_OPENAI_ENDPOINT", ""),
+        "azure_openai_api_key": azure_api_key,
+        "azure_openai_endpoint": azure_endpoint,
         "azure_openai_api_version": os.getenv("AZURE_OPENAI_API_VERSION", "2024-02-15-preview"),
         "azure_openai_deployment_name": os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME", "gpt-4"),
         "temperature": float(os.getenv("AUTOGEN_TEMPERATURE", "0.1")),
@@ -184,18 +199,11 @@ async def main():
     logger.info("🔧 Loading KRATOS configuration...")
     config = load_configuration()
     
+    if config is None:
+        logger.error("❌ Configuration validation failed")
+        sys.exit(1)
+    
     # Validate configuration
-    if not config["azure_openai_api_key"]:
-        logger.error("❌ AZURE_OPENAI_API_KEY not found in environment variables")
-        logger.error("Please set your Azure OpenAI API key in the .env file or environment")
-        sys.exit(1)
-    
-    if not config["azure_openai_endpoint"]:
-        logger.error("❌ AZURE_OPENAI_ENDPOINT not found in environment variables")
-        logger.error("Please set your Azure OpenAI endpoint in the .env file or environment")
-        logger.error("Example: AZURE_OPENAI_ENDPOINT=https://your-resource-name.openai.azure.com/")
-        sys.exit(1)
-    
     # Check if MCP endpoint is configured
     mcp_endpoint = config["agents"]["k8s-agent"].get("mcp_endpoint")
     if not mcp_endpoint or mcp_endpoint == "http://localhost:3000":

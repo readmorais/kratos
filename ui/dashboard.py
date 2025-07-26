@@ -14,6 +14,7 @@ import os
 import sys
 import threading
 import time
+from dotenv import load_dotenv
 
 # Add project root to path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -122,6 +123,9 @@ class KratosDashboard:
     
     def _load_config(self) -> Dict[str, Any]:
         """Load KRATOS configuration"""
+        # Load environment variables from .env file
+        load_dotenv()
+        
         config = {
             # Azure OpenAI configuration
             "azure_openai_api_key": os.getenv("AZURE_OPENAI_API_KEY", ""),
@@ -241,18 +245,19 @@ class KratosDashboard:
             
             # Environment check
             env_vars = [
-                "AKS_MCP_ENDPOINT",
-                "AZURE_OPENAI_API_KEY",
-                "AZURE_OPENAI_ENDPOINT",
-                "AZURE_OPENAI_DEPLOYMENT_NAME"
+                ("AKS_MCP_ENDPOINT", "MCP Server Endpoint"),
+                ("AZURE_OPENAI_API_KEY", "Azure OpenAI API Key"),
+                ("AZURE_OPENAI_ENDPOINT", "Azure OpenAI Endpoint"),
+                ("AZURE_OPENAI_DEPLOYMENT_NAME", "Azure OpenAI Deployment")
             ]
             
-            for var in env_vars:
+            for var, description in env_vars:
                 value = os.getenv(var, "")
                 if value:
-                    st.success(f"✅ {var}")
+                    st.success(f"✅ {description}")
                 else:
-                    st.error(f"❌ {var}")
+                    st.error(f"❌ {description}")
+                    st.caption(f"Set {var} in .env file")
     
     def render_task_interface(self):
         """Render the main task interface"""

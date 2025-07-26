@@ -30,6 +30,16 @@ class KratosController:
         self.task_queue = asyncio.Queue()
         self.running_tasks = {}
         
+        # Validate required configuration
+        required_config = [
+            "azure_openai_api_key",
+            "azure_openai_endpoint"
+        ]
+        
+        for key in required_config:
+            if not config.get(key):
+                raise ValueError(f"Missing required configuration: {key}")
+        
         # AutoGen configuration
         self.llm_config = {
             "config_list": [
