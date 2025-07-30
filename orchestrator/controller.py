@@ -99,7 +99,6 @@ class KratosController:
                                        "task completed" in x.get("content", "").lower(),
             code_execution_config={"work_dir": "/tmp", "use_docker": False},
         )
-        
         # Create k8s assistant agent with function calling
         if "k8s-agent" in self.agents:
             k8s_agent = self.agents["k8s-agent"]
@@ -107,7 +106,6 @@ class KratosController:
             # Get function definitions
             functions = k8s_agent.get_function_definitions()
             
-            # Create function map for AutoGen
             function_map = {}
             for func_def in functions:
                 func_name = func_def["name"]
