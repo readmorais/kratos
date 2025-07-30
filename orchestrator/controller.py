@@ -94,7 +94,9 @@ class KratosController:
             name="user",
             human_input_mode="NEVER",
             max_consecutive_auto_reply=10,
-            is_termination_msg=lambda x: x.get("content", "").rstrip().endswith("TERMINATE"),
+            is_termination_msg=lambda x: x.get("content", "").rstrip().endswith("TERMINATE") or 
+                                       x.get("content", "").strip() == "" or
+                                       "task completed" in x.get("content", "").lower(),
             code_execution_config={"work_dir": "/tmp", "use_docker": False},
         )
         
@@ -138,6 +140,8 @@ Remember to:
 4. Include relevant details in responses (cluster names, pod counts, health scores, etc.)
 5. Suggest best practices when appropriate
 6. When working with multiple clusters, clearly indicate which cluster you're operating on
+7. Always end your response with "TERMINATE" when the task is completed successfully
+8. Do not ask follow-up questions unless absolutely necessary for task completion
 """,
                 function_map=function_map
             )
@@ -260,7 +264,8 @@ Remember to:
             chat_result = user_proxy.initiate_chat(
                 target_agent,
                 message=message,
-                max_turns=5
+                max_turns=3,
+                silent=False
             )
             
             return {
@@ -291,7 +296,7 @@ Remember to:
             chat_result = user_proxy.initiate_chat(
                 self.group_chat_manager,
                 message=message,
-                max_turns=8
+                max_turns=4
             )
             
             return {

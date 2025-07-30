@@ -78,20 +78,18 @@ st.markdown("""
         border-radius: 8px;
         padding: 1rem;
         margin: 0.5rem 0;
+        background-color: transparent;
     }
     
     .user-message {
-        background-color: #e3f2fd;
         border-left: 4px solid #2196f3;
     }
     
     .assistant-message {
-        background-color: #f3e5f5;
         border-left: 4px solid #9c27b0;
     }
     
     .system-message {
-        background-color: #fff3e0;
         border-left: 4px solid #ff9800;
     }
 </style>
@@ -190,13 +188,31 @@ class KratosDashboard:
                 else:
                     st.warning("🎯 Not Connected")
             else:
-            current_time = datetime.now().strftime("%H:%M:%S")
-            st.info(f"🕒 {current_time}")
+                current_time = datetime.now().strftime("%H:%M:%S")
+                st.info(f"🕒 {current_time}")
     
     def render_sidebar(self):
         """Render the sidebar with agent information"""
         with st.sidebar:
             st.header("🎛️ Control Panel")
+            
+            # Settings section (collapsible)
+            with st.expander("⚙️ Settings", expanded=False):
+                # Environment check
+                env_vars = [
+                    ("AKS_MCP_ENDPOINT", "MCP Server Endpoint"),
+                    ("AZURE_OPENAI_API_KEY", "Azure OpenAI API Key"),
+                    ("AZURE_OPENAI_ENDPOINT", "Azure OpenAI Endpoint"),
+                    ("AZURE_OPENAI_DEPLOYMENT_NAME", "Azure OpenAI Deployment")
+                ]
+                
+                for var, description in env_vars:
+                    value = os.getenv(var, "")
+                    if value:
+                        st.success(f"✅ {description}")
+                    else:
+                        st.error(f"❌ {description}")
+                        st.caption(f"Set {var} in .env file")
             
             # Agent status
             if self.controller:
@@ -239,25 +255,6 @@ class KratosDashboard:
                                 <small>{func['description']}</small>
                             </div>
                             """, unsafe_allow_html=True)
-            
-            # Configuration
-            st.subheader("⚙️ Settings")
-            
-            # Environment check
-            env_vars = [
-                ("AKS_MCP_ENDPOINT", "MCP Server Endpoint"),
-                ("AZURE_OPENAI_API_KEY", "Azure OpenAI API Key"),
-                ("AZURE_OPENAI_ENDPOINT", "Azure OpenAI Endpoint"),
-                ("AZURE_OPENAI_DEPLOYMENT_NAME", "Azure OpenAI Deployment")
-            ]
-            
-            for var, description in env_vars:
-                value = os.getenv(var, "")
-                if value:
-                    st.success(f"✅ {description}")
-                else:
-                    st.error(f"❌ {description}")
-                    st.caption(f"Set {var} in .env file")
     
     def render_task_interface(self):
         """Render the main task interface"""
@@ -316,6 +313,9 @@ class KratosDashboard:
                 
                 if result.get("status") == "success":
                     st.success("✅ Task completed successfully!")
+                    
+                    # Force refresh of sidebar to update cluster info
+                    st.rerun()
                     
                     # Display results
                     task_result = result.get("result", {})
