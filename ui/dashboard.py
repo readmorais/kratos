@@ -314,9 +314,6 @@ class KratosDashboard:
                 if result.get("status") == "success":
                     st.success("✅ Task completed successfully!")
                     
-                    # Force refresh of sidebar to update cluster info
-                    st.rerun()
-                    
                     # Display results
                     task_result = result.get("result", {})
                     
@@ -328,9 +325,23 @@ class KratosDashboard:
                     if "summary" in task_result:
                         st.info(f"📋 **Summary:** {task_result['summary']}")
                     
+                    # Show function execution history
+                    history = result.get("conversation_history", [])
+                    if history:
+                        with st.expander("🔍 Function Execution Details", expanded=False):
+                            for entry in history[-3:]:  # Show last 3 function calls
+                                st.write(f"**{entry['function']}** - {entry['timestamp']}")
+                                if entry['result'].get('status') == 'success':
+                                    st.success(f"✅ {entry['result'].get('message', 'Success')}")
+                                else:
+                                    st.error(f"❌ {entry['result'].get('message', 'Error')}")
+                    
                     # Show raw result for debugging
                     with st.expander("🔍 Raw Result", expanded=False):
                         st.json(task_result)
+                    
+                    # Force refresh of sidebar to update cluster info
+                    st.rerun()
                 
                 else:
                     st.error(f"❌ Task failed: {result.get('message', 'Unknown error')}")
@@ -407,6 +418,10 @@ class KratosDashboard:
         for i, msg in enumerate(messages):
             role = msg.get("role", "unknown")
             content = msg.get("content", "")
+            
+            # Skip empty messages
+            if not content or content.strip() == "":
+                continue
             
             if role == "user":
                 st.markdown(f"""

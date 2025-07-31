@@ -40,6 +40,11 @@ class KratosController:
             if not config.get(key):
                 raise ValueError(f"Missing required configuration: {key}")
         
+        # Validate URLs
+        endpoint = config.get("azure_openai_endpoint", "")
+        if not endpoint or endpoint in ["", "http://", "https://"]:
+            raise ValueError(f"Invalid Azure OpenAI endpoint: {endpoint}. Example: https://your-resource-name.openai.azure.com")
+        
         # AutoGen configuration
         self.llm_config = {
             "config_list": [
@@ -76,9 +81,6 @@ class KratosController:
             # Create AutoGen agents
             await self._create_autogen_agents()
             
-            # Setup group chat
-            self._setup_group_chat()
-            
             logger.info("KRATOS Controller initialized successfully")
             return True
             
@@ -93,62 +95,59 @@ class KratosController:
         self.autogen_agents["user"] = UserProxyAgent(
             name="user",
             human_input_mode="NEVER",
-            max_consecutive_auto_reply=10,
-            is_termination_msg=lambda x: x.get("content", "").rstrip().endswith("TERMINATE") or 
-                                       x.get("content", "").strip() == "" or
-                                       "task completed" in x.get("content", "").lower(),
-            code_execution_config={"work_dir": "/tmp", "use_docker": False},
+            max_consecutive_auto_reply=0,
+            is_termination_msg=lambda x: True,  # Always terminate after first response
+            code_execution_config=False,
         )
-        # Create k8s assistant agent with function calling
+        
+        # Create k8s assistant agent
         if "k8s-agent" in self.agents:
             k8s_agent = self.agents["k8s-agent"]
             
             # Get function definitions
             functions = k8s_agent.get_function_definitions()
             
+            # Create function map for AutoGen
             function_map = {}
             for func_def in functions:
                 func_name = func_def["name"]
-                function_map[func_name] = self._create_agent_function(k8s_agent, func_name)
+                function_map[func_name] = self._create_agent_function_wrapper(k8s_agent, func_name)
             
             self.autogen_agents["k8s-assistant"] = AssistantAgent(
                 name="k8s-assistant",
                 llm_config=self.llm_config,
-                system_message="""You are a multi-cluster Kubernetes expert assistant working within the KRATOS system.
-                
-You have access to the following multi-cluster Kubernetes operations:
-- list_clusters: List all available Kubernetes clusters
-- switch_cluster: Switch to a different cluster context
-- get_pods: List pods in a namespace
-- restart_deployment: Restart a deployment
-- apply_yaml: Apply Kubernetes manifests
-- get_node_metrics: Get cluster node information
-- get_cluster_health: Get overall cluster health
-- scale_deployment: Scale deployments up or down
-- get_logs: Get pod logs
+                system_message="""You are a Kubernetes expert assistant. You have access to these functions:
 
-Always provide clear, actionable responses about multi-cluster Kubernetes operations.
-When asked to perform operations, use the appropriate function calls.
-Format responses in a user-friendly way with relevant details.
+- list_clusters: List all available clusters
+- switch_cluster: Switch to a different cluster (parameter: cluster_name)
+- get_pods: Get pods in a namespace (parameters: namespace, cluster)
+- restart_deployment: Restart a deployment (parameters: deployment_name, namespace, cluster)
+- apply_yaml: Apply YAML manifest (parameters: yaml_content, cluster)
+- get_node_metrics: Get node information (parameter: cluster)
+- get_cluster_health: Get cluster health (parameter: cluster)
+- scale_deployment: Scale deployment (parameters: deployment_name, replicas, namespace, cluster)
+- get_logs: Get pod logs (parameters: pod_name, namespace, container_name, tail_lines, cluster)
 
-Remember to:
-1. List available clusters when users ask about cluster operations
-2. Ask for clarification if cluster, namespace, or deployment names are not specified
-3. Provide status updates during operations
-4. Include relevant details in responses (cluster names, pod counts, health scores, etc.)
-5. Suggest best practices when appropriate
-6. When working with multiple clusters, clearly indicate which cluster you're operating on
-7. Always end your response with "TERMINATE" when the task is completed successfully
-8. Do not ask follow-up questions unless absolutely necessary for task completion
+When users ask for operations:
+1. Use the appropriate functions to complete the task
+2. Provide clear, helpful responses about what you found or did
+3. Always end your response with "TERMINATE" when the task is complete
+
+For searching across all namespaces, use namespace="all" in get_pods function.
 """,
                 function_map=function_map
             )
     
-    def _create_agent_function(self, agent: K8sAgent, function_name: str):
+    def _create_agent_function_wrapper(self, agent: K8sAgent, function_name: str):
         """Create a function wrapper for AutoGen integration"""
-        async def agent_function(**kwargs):
+        def sync_wrapper(**kwargs):
+            """Synchronous wrapper for async agent functions"""
             try:
-                result = await agent.execute_function(function_name, **kwargs)
+                # Run the async function
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                result = loop.run_until_complete(agent.execute_function(function_name, **kwargs))
+                loop.close()
                 
                 # Store in conversation history
                 self.conversation_history.append({
@@ -159,7 +158,42 @@ Remember to:
                     "result": result
                 })
                 
-                return result
+                # Return formatted result for AutoGen
+                if result.get("status") == "success":
+                    if function_name == "list_clusters":
+                        clusters = result.get("clusters", [])
+                        return f"Available clusters: {', '.join([c['name'] for c in clusters])}"
+                    
+                    elif function_name == "switch_cluster":
+                        return f"Successfully switched to cluster: {result.get('cluster', 'unknown')}"
+                    
+                    elif function_name == "get_pods":
+                        pods = result.get("pods", [])
+                        if not pods:
+                            return f"No pods found in namespace {kwargs.get('namespace', 'default')}"
+                        
+                        pod_info = []
+                        for pod in pods:
+                            status = pod.get("status", "Unknown")
+                            name = pod.get("name", "Unknown")
+                            namespace = pod.get("namespace", "Unknown")
+                            pod_info.append(f"  - {name} ({status}) in {namespace}")
+                        
+                        return f"Found {len(pods)} pods:\n" + "\n".join(pod_info)
+                    
+                    elif function_name == "restart_deployment":
+                        return f"Successfully restarted deployment: {result.get('deployment', 'unknown')}"
+                    
+                    elif function_name == "get_cluster_health":
+                        health_score = result.get("health_score", 0)
+                        nodes = result.get("nodes", {})
+                        return f"Cluster health: {health_score}% - {nodes.get('ready', 0)}/{nodes.get('total', 0)} nodes ready"
+                    
+                    else:
+                        return f"Function {function_name} completed successfully: {result.get('message', 'No details')}"
+                else:
+                    return f"Error in {function_name}: {result.get('message', 'Unknown error')}"
+                    
             except Exception as e:
                 error_result = {
                     "status": "error",
@@ -176,30 +210,9 @@ Remember to:
                     "result": error_result
                 })
                 
-                return error_result
+                return f"Error executing {function_name}: {str(e)}"
         
-        return agent_function
-    
-    def _setup_group_chat(self):
-        """Setup AutoGen group chat"""
-        if not self.autogen_agents:
-            logger.warning("No AutoGen agents available for group chat")
-            return
-            
-        # Create group chat with all agents
-        agents_list = list(self.autogen_agents.values())
-        
-        self.group_chat = GroupChat(
-            agents=agents_list,
-            messages=[],
-            max_round=self.config.get("max_round", 10),
-            speaker_selection_method="auto"
-        )
-        
-        self.group_chat_manager = GroupChatManager(
-            groupchat=self.group_chat,
-            llm_config=self.llm_config
-        )
+        return sync_wrapper
     
     async def process_user_message(self, message: str, selected_agent: Optional[str] = None) -> Dict[str, Any]:
         """Process a user message through the agent system"""
@@ -217,11 +230,8 @@ Remember to:
             
             self.running_tasks[task_id] = task_info
             
-            # Route to specific agent or use group chat
-            if selected_agent and selected_agent in self.autogen_agents:
-                result = await self._process_with_specific_agent(message, selected_agent, task_id)
-            else:
-                result = await self._process_with_group_chat(message, task_id)
+            # Use direct communication with k8s-assistant
+            result = await self._process_with_k8s_assistant(message, task_id)
             
             # Update task completion
             task_info.update({
@@ -248,66 +258,36 @@ Remember to:
             if task_id in self.running_tasks:
                 self.running_tasks[task_id]["status"] = "completed"
     
-    async def _process_with_specific_agent(self, message: str, agent_name: str, task_id: str) -> Dict[str, Any]:
-        """Process message with a specific agent"""
+    async def _process_with_k8s_assistant(self, message: str, task_id: str) -> Dict[str, Any]:
+        """Process message directly with k8s assistant"""
         try:
             user_proxy = self.autogen_agents["user"]
-            target_agent = self.autogen_agents[agent_name]
+            k8s_assistant = self.autogen_agents["k8s-assistant"]
             
             # Clear previous messages
             user_proxy.clear_history()
-            target_agent.clear_history()
+            k8s_assistant.clear_history()
             
-            # Initiate chat
+            # Initiate direct chat
             chat_result = user_proxy.initiate_chat(
-                target_agent,
+                k8s_assistant,
                 message=message,
-                max_turns=3,
+                max_turns=1,
                 silent=False
             )
             
             return {
-                "agent": agent_name,
-                "messages": chat_result.chat_history,
+                "agent": "k8s-assistant",
+                "messages": chat_result.chat_history if hasattr(chat_result, 'chat_history') else [],
                 "summary": chat_result.summary if hasattr(chat_result, 'summary') else "Task completed"
             }
             
         except Exception as e:
-            logger.error(f"Error in specific agent processing: {e}")
+            logger.error(f"Error in k8s assistant processing: {e}")
             return {
-                "agent": agent_name,
-                "error": str(e)
-            }
-    
-    async def _process_with_group_chat(self, message: str, task_id: str) -> Dict[str, Any]:
-        """Process message with group chat"""
-        try:
-            if not self.group_chat_manager:
-                return {"error": "Group chat not initialized"}
-            
-            user_proxy = self.autogen_agents["user"]
-            
-            # Clear group chat history
-            self.group_chat.reset()
-            
-            # Initiate group chat
-            chat_result = user_proxy.initiate_chat(
-                self.group_chat_manager,
-                message=message,
-                max_turns=4
-            )
-            
-            return {
-                "type": "group_chat",
-                "messages": chat_result.chat_history,
-                "summary": chat_result.summary if hasattr(chat_result, 'summary') else "Task completed"
-            }
-            
-        except Exception as e:
-            logger.error(f"Error in group chat processing: {e}")
-            return {
-                "type": "group_chat", 
-                "error": str(e)
+                "agent": "k8s-assistant",
+                "error": str(e),
+                "messages": []
             }
     
     def get_recent_history(self, limit: int = 20) -> List[Dict[str, Any]]:
