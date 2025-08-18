@@ -308,7 +308,7 @@ Example: If asked to "switch to minerva cluster and look for microbot across all
             chat_result = user_proxy.initiate_chat(
                 k8s_assistant,
                 message=message,
-                max_turns=1,
+                max_turns=2,
                 silent=False
             )
             
@@ -316,15 +316,28 @@ Example: If asked to "switch to minerva cluster and look for microbot across all
             
             # Extract messages from chat result
             messages = []
-            if hasattr(chat_result, 'chat_history'):
+            if hasattr(chat_result, 'chat_history') and chat_result.chat_history:
                 messages = chat_result.chat_history
-            elif hasattr(chat_result, 'messages'):
+                logger.info(f"Got messages from chat_history: {len(messages)}")
+            elif hasattr(chat_result, 'messages') and chat_result.messages:
                 messages = chat_result.messages
+                logger.info(f"Got messages from messages: {len(messages)}")
             else:
                 # Fallback - get from agent histories
-                messages = user_proxy.chat_messages.get(k8s_assistant, [])
+                if hasattr(user_proxy, 'chat_messages') and k8s_assistant in user_proxy.chat_messages:
+                    messages = user_proxy.chat_messages[k8s_assistant]
+                    logger.info(f"Got messages from user_proxy chat_messages: {len(messages)}")
+                elif hasattr(k8s_assistant, 'chat_messages') and user_proxy in k8s_assistant.chat_messages:
+                    messages = k8s_assistant.chat_messages[user_proxy]
+                    logger.info(f"Got messages from k8s_assistant chat_messages: {len(messages)}")
+                else:
+                    logger.warning("No messages found in any location")
             
             logger.info(f"Extracted {len(messages)} messages")
+            
+            # Log message details for debugging
+            for i, msg in enumerate(messages):
+                logger.info(f"Message {i}: role={msg.get('role', 'unknown')}, content_length={len(str(msg.get('content', '')))}")
             
             return {
                 "agent": "k8s-assistant",

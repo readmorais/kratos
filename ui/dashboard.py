@@ -320,10 +320,12 @@ class KratosDashboard:
                     # Show conversation
                     if "messages" in task_result:
                         messages = task_result["messages"]
+                        logger.info(f"Displaying {len(messages)} messages in UI")
                         if messages:
                             self._display_conversation(messages)
                         else:
-                            st.info("Task completed but no conversation messages to display")
+                            st.warning("Task completed but no conversation messages to display")
+                            logger.warning("No messages to display in UI")
                     
                     # Show summary
                     if "summary" in task_result:
@@ -331,6 +333,7 @@ class KratosDashboard:
                     
                     # Show function execution history
                     history = result.get("conversation_history", [])
+                    logger.info(f"Function execution history: {len(history)} entries")
                     if history:
                         st.subheader("🔧 Function Execution Results")
                         for entry in history[-3:]:  # Show last 3 function calls
@@ -430,28 +433,32 @@ class KratosDashboard:
         for i, msg in enumerate(messages):
             role = msg.get("role", "unknown")
             content = msg.get("content", "")
+            name = msg.get("name", role)
             
             # Log message for debugging
-            logger.info(f"Displaying message {i}: role={role}, content_length={len(content)}")
+            logger.info(f"Displaying message {i}: role={role}, name={name}, content_length={len(content)}")
             
             # Skip empty messages
-            if not content or content.strip() == "":
+            if not content or str(content).strip() == "":
+                logger.info(f"Skipping empty message {i}")
                 continue
+            
+            # Convert content to string if it's not already
+            content_str = str(content)
             
             if role == "user":
                 st.markdown(f"""
                 <div class="conversation-message user-message">
                     <strong>👤 User:</strong><br>
-                    {content}
+                    {content_str}
                 </div>
                 """, unsafe_allow_html=True)
             
             elif role == "assistant":
-                agent_name = msg.get("name", "Assistant")
                 st.markdown(f"""
                 <div class="conversation-message assistant-message">
-                    <strong>🤖 {agent_name}:</strong><br>
-                    {content}
+                    <strong>🤖 {name}:</strong><br>
+                    {content_str}
                 </div>
                 """, unsafe_allow_html=True)
             
@@ -459,7 +466,7 @@ class KratosDashboard:
                 st.markdown(f"""
                 <div class="conversation-message system-message">
                     <strong>⚙️ System:</strong><br>
-                    {content}
+                    {content_str}
                 </div>
                 """, unsafe_allow_html=True)
     

@@ -55,7 +55,8 @@ class MultiClusterMCPWrapper:
                     try:
                         v1 = client.CoreV1Api()
                         # Try to get cluster info
-                        version = v1.get_code()
+                        version_api = client.VersionApi()
+                        version = version_api.get_code()
                         logger.info(f"Connected to cluster {self.current_cluster}, Kubernetes version: {version.git_version}")
                     except Exception as e:
                         logger.warning(f"Could not connect to current cluster {self.current_cluster}: {e}")
@@ -119,7 +120,8 @@ class MultiClusterMCPWrapper:
             # Test the connection
             try:
                 v1 = client.CoreV1Api()
-                version = v1.get_code()
+                version_api = client.VersionApi()
+                version = version_api.get_code()
                 logger.info(f"Successfully switched to cluster '{cluster_name}', version: {version.git_version}")
             except Exception as e:
                 logger.warning(f"Switched to cluster '{cluster_name}' but connection test failed: {e}")
