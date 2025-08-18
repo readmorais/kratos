@@ -25,30 +25,47 @@ class MultiClusterMCPWrapper:
     async def initialize(self) -> bool:
         """Initialize available clusters"""
         try:
-            # Try to load kubeconfig and get available contexts
+            logger.info("Initializing multi-cluster wrapper...")
+            
+            # Load kubeconfig and get available contexts
             try:
                 contexts, active_context = config.list_kube_config_contexts()
+                
+                if not contexts:
+                    logger.warning("No Kubernetes contexts found in kubeconfig")
+                    return False
                 
                 for context in contexts:
                     cluster_name = context['name']
                     self.clusters[cluster_name] = {
                         'context': context,
-                        'active': context == active_context
+                        'active': context == active_context,
+                        'cluster_info': context.get('context', {})
                     }
                     
                     if context == active_context:
                         self.current_cluster = cluster_name
+                        logger.info(f"Active cluster set to: {self.current_cluster}")
                 
                 logger.info(f"Initialized {len(self.clusters)} clusters")
                 logger.info(f"Available clusters: {list(self.clusters.keys())}")
-                logger.info(f"Current cluster: {self.current_cluster}")
+                
+                # Test connection to current cluster
+                if self.current_cluster:
+                    try:
+                        v1 = client.CoreV1Api()
+                        # Try to get cluster info
+                        version = v1.get_code()
+                        logger.info(f"Connected to cluster {self.current_cluster}, Kubernetes version: {version.git_version}")
+                    except Exception as e:
+                        logger.warning(f"Could not connect to current cluster {self.current_cluster}: {e}")
                 
                 return len(self.clusters) > 0
                 
             except ConfigException as e:
-                logger.warning(f"No kubeconfig found: {e}")
-                # Try to connect to MCP server directly
-                return await self._test_mcp_connection()
+                logger.error(f"Kubeconfig error: {e}")
+                logger.error("Please ensure kubectl is configured with valid cluster contexts")
+                return False
                 
         except Exception as e:
             logger.error(f"Failed to initialize multi-cluster wrapper: {e}")
@@ -66,27 +83,46 @@ class MultiClusterMCPWrapper:
     
     async def list_clusters(self) -> List[Dict[str, Any]]:
         """List available clusters"""
+        logger.info(f"Listing {len(self.clusters)} available clusters")
         cluster_list = []
         for name, info in self.clusters.items():
+            cluster_info = info.get('cluster_info', {})
             cluster_list.append({
                 "name": name,
-                "active": info.get("active", False),
-                "context": info["context"]["context"]
+                "active": name == self.current_cluster,
+                "context": cluster_info.get('cluster', 'unknown'),
+                "namespace": cluster_info.get('namespace', 'default'),
+                "user": cluster_info.get('user', 'unknown')
             })
+        
+        logger.info(f"Returning cluster list: {[c['name'] for c in cluster_list]}")
         return cluster_list
     
     async def switch_cluster(self, cluster_name: str) -> Dict[str, Any]:
         """Switch to a different cluster context"""
         try:
+            logger.info(f"Attempting to switch to cluster: {cluster_name}")
+            logger.info(f"Available clusters: {list(self.clusters.keys())}")
+            
             if cluster_name not in self.clusters:
+                available = list(self.clusters.keys())
+                logger.error(f"Cluster '{cluster_name}' not found. Available: {available}")
                 return {
                     "status": "error",
-                    "message": f"Cluster '{cluster_name}' not found. Available: {list(self.clusters.keys())}"
+                    "message": f"Cluster '{cluster_name}' not found. Available clusters: {', '.join(available)}"
                 }
             
             # Load the specific context
             config.load_kube_config(context=cluster_name)
             self.current_cluster = cluster_name
+            
+            # Test the connection
+            try:
+                v1 = client.CoreV1Api()
+                version = v1.get_code()
+                logger.info(f"Successfully switched to cluster '{cluster_name}', version: {version.git_version}")
+            except Exception as e:
+                logger.warning(f"Switched to cluster '{cluster_name}' but connection test failed: {e}")
             
             return {
                 "status": "success",
@@ -128,6 +164,7 @@ class MultiClusterMCPWrapper:
     async def get_pods(self, namespace: str = "default", cluster: Optional[str] = None) -> List[Dict[str, Any]]:
         """Get pods in a namespace"""
         try:
+            logger.info(f"Getting pods from namespace: {namespace}, cluster: {cluster}")
             # Switch cluster if specified
             if cluster and cluster != self.current_cluster:
                 switch_result = await self.switch_cluster(cluster)
@@ -135,7 +172,26 @@ class MultiClusterMCPWrapper:
                     return []
             
             v1 = client.CoreV1Api()
-            pods = v1.list_namespaced_pod(namespace=namespace)
+            
+            # Handle "all" namespace - search across all namespaces
+            if namespace == "all":
+                logger.info("Searching pods across all namespaces")
+                pods = v1.list_pod_for_all_namespaces()
+            else:
+                try:
+                    pods = v1.list_namespaced_pod(namespace=namespace)
+                except client.ApiException as e:
+                    if e.status == 404:
+                        logger.warning(f"Namespace '{namespace}' not found")
+                        return []
+                    else:
+                        raise
+            
+            if not pods.items:
+                logger.info(f"No pods found in namespace {namespace}")
+                return []
+            
+            logger.info(f"Found {len(pods.items)} pods in namespace {namespace}")
             
             pod_list = []
             for pod in pods.items:
@@ -157,7 +213,7 @@ class MultiClusterMCPWrapper:
                 }
                 pod_list.append(pod_info)
             
-            logger.info(f"Retrieved {len(pod_list)} pods from namespace {namespace} in cluster {self.current_cluster}")
+            logger.info(f"Processed {len(pod_list)} pods from namespace {namespace} in cluster {self.current_cluster}")
             return pod_list
             
         except Exception as e:

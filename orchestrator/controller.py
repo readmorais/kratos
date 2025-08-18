@@ -11,7 +11,7 @@ import yaml
 from datetime import datetime
 
 import autogen
-from autogen import AssistantAgent, UserProxyAgent, GroupChatManager, GroupChat
+from autogen import AssistantAgent, UserProxyAgent
 
 from agents.k8s_agent import K8sAgent
 
@@ -24,8 +24,6 @@ class KratosController:
         self.config = config
         self.agents = {}
         self.autogen_agents = {}
-        self.group_chat = None
-        self.group_chat_manager = None
         self.conversation_history = []
         self.task_queue = asyncio.Queue()
         self.running_tasks = {}
@@ -42,7 +40,7 @@ class KratosController:
         
         # Validate URLs
         endpoint = config.get("azure_openai_endpoint", "")
-        if not endpoint or endpoint in ["", "http://", "https://"]:
+        if not endpoint or endpoint in ["", "http://", "https://", "http://localhost", "https://localhost"]:
             raise ValueError(f"Invalid Azure OpenAI endpoint: {endpoint}. Example: https://your-resource-name.openai.azure.com")
         
         # AutoGen configuration
@@ -91,12 +89,12 @@ class KratosController:
     async def _create_autogen_agents(self):
         """Create AutoGen agents with function bindings"""
         
-        # Create user proxy agent
+        # Create user proxy agent - no auto reply, terminates immediately
         self.autogen_agents["user"] = UserProxyAgent(
             name="user",
             human_input_mode="NEVER",
             max_consecutive_auto_reply=0,
-            is_termination_msg=lambda x: True,  # Always terminate after first response
+            is_termination_msg=lambda x: True,
             code_execution_config=False,
         )
         
@@ -116,11 +114,11 @@ class KratosController:
             self.autogen_agents["k8s-assistant"] = AssistantAgent(
                 name="k8s-assistant",
                 llm_config=self.llm_config,
-                system_message="""You are a Kubernetes expert assistant. You have access to these functions:
+                system_message="""You are a Kubernetes expert assistant managing multiple clusters. You have access to these functions:
 
 - list_clusters: List all available clusters
 - switch_cluster: Switch to a different cluster (parameter: cluster_name)
-- get_pods: Get pods in a namespace (parameters: namespace, cluster)
+- get_pods: Get pods in a namespace (parameters: namespace, cluster) - use namespace="all" to search all namespaces
 - restart_deployment: Restart a deployment (parameters: deployment_name, namespace, cluster)
 - apply_yaml: Apply YAML manifest (parameters: yaml_content, cluster)
 - get_node_metrics: Get node information (parameter: cluster)
@@ -129,11 +127,17 @@ class KratosController:
 - get_logs: Get pod logs (parameters: pod_name, namespace, container_name, tail_lines, cluster)
 
 When users ask for operations:
-1. Use the appropriate functions to complete the task
-2. Provide clear, helpful responses about what you found or did
-3. Always end your response with "TERMINATE" when the task is complete
+1. Execute the appropriate functions to complete the task
+2. Always call functions when needed - don't just describe what you would do
+3. For searching across namespaces, use namespace="all"
+4. Provide clear, helpful responses about what you found or did
+5. Always end your response with "TERMINATE" when the task is complete
 
-For searching across all namespaces, use namespace="all" in get_pods function.
+Example: If asked to "switch to minerva cluster and look for microbot across all namespaces":
+1. Call switch_cluster with cluster_name="minerva"
+2. Call get_pods with namespace="all" to search all namespaces
+3. Filter results for pods containing "microbot"
+4. Report findings and end with "TERMINATE"
 """,
                 function_map=function_map
             )
@@ -143,11 +147,15 @@ For searching across all namespaces, use namespace="all" in get_pods function.
         def sync_wrapper(**kwargs):
             """Synchronous wrapper for async agent functions"""
             try:
+                logger.info(f"Executing function {function_name} with args: {kwargs}")
+                
                 # Run the async function
                 loop = asyncio.new_event_loop()
                 asyncio.set_event_loop(loop)
                 result = loop.run_until_complete(agent.execute_function(function_name, **kwargs))
                 loop.close()
+                
+                logger.info(f"Function {function_name} result: {result}")
                 
                 # Store in conversation history
                 self.conversation_history.append({
@@ -162,39 +170,65 @@ For searching across all namespaces, use namespace="all" in get_pods function.
                 if result.get("status") == "success":
                     if function_name == "list_clusters":
                         clusters = result.get("clusters", [])
-                        return f"Available clusters: {', '.join([c['name'] for c in clusters])}"
+                        if clusters:
+                            cluster_names = [c.get('name', str(c)) for c in clusters]
+                            return f"Available clusters: {', '.join(cluster_names)}"
+                        else:
+                            return "No clusters found"
                     
                     elif function_name == "switch_cluster":
-                        return f"Successfully switched to cluster: {result.get('cluster', 'unknown')}"
+                        cluster = result.get("cluster", kwargs.get("cluster_name", "unknown"))
+                        return f"Successfully switched to cluster: {cluster}"
                     
                     elif function_name == "get_pods":
                         pods = result.get("pods", [])
+                        namespace = kwargs.get("namespace", "default")
+                        
                         if not pods:
-                            return f"No pods found in namespace {kwargs.get('namespace', 'default')}"
+                            return f"No pods found in namespace {namespace}"
                         
-                        pod_info = []
-                        for pod in pods:
-                            status = pod.get("status", "Unknown")
-                            name = pod.get("name", "Unknown")
-                            namespace = pod.get("namespace", "Unknown")
-                            pod_info.append(f"  - {name} ({status}) in {namespace}")
-                        
-                        return f"Found {len(pods)} pods:\n" + "\n".join(pod_info)
+                        # Filter for microbot if searching across all namespaces
+                        if "microbot" in str(kwargs).lower() or namespace == "all":
+                            microbot_pods = [pod for pod in pods if "microbot" in pod.get("name", "").lower()]
+                            if microbot_pods:
+                                pod_info = []
+                                for pod in microbot_pods:
+                                    status = pod.get("status", "Unknown")
+                                    name = pod.get("name", "Unknown")
+                                    ns = pod.get("namespace", "Unknown")
+                                    pod_info.append(f"  - {name} ({status}) in namespace {ns}")
+                                return f"Found {len(microbot_pods)} microbot pods:\n" + "\n".join(pod_info)
+                            else:
+                                return "No microbot pods found across all namespaces"
+                        else:
+                            pod_info = []
+                            for pod in pods[:10]:  # Limit to first 10 pods
+                                status = pod.get("status", "Unknown")
+                                name = pod.get("name", "Unknown")
+                                ns = pod.get("namespace", "Unknown")
+                                pod_info.append(f"  - {name} ({status}) in {ns}")
+                            
+                            more_text = f" (showing first 10 of {len(pods)})" if len(pods) > 10 else ""
+                            return f"Found {len(pods)} pods{more_text}:\n" + "\n".join(pod_info)
                     
                     elif function_name == "restart_deployment":
-                        return f"Successfully restarted deployment: {result.get('deployment', 'unknown')}"
+                        deployment = result.get("deployment", kwargs.get("deployment_name", "unknown"))
+                        return f"Successfully restarted deployment: {deployment}"
                     
                     elif function_name == "get_cluster_health":
                         health_score = result.get("health_score", 0)
                         nodes = result.get("nodes", {})
-                        return f"Cluster health: {health_score}% - {nodes.get('ready', 0)}/{nodes.get('total', 0)} nodes ready"
+                        cluster = result.get("cluster_name", "unknown")
+                        return f"Cluster {cluster} health: {health_score}% - {nodes.get('ready', 0)}/{nodes.get('total', 0)} nodes ready"
                     
                     else:
                         return f"Function {function_name} completed successfully: {result.get('message', 'No details')}"
                 else:
-                    return f"Error in {function_name}: {result.get('message', 'Unknown error')}"
+                    error_msg = result.get('message', 'Unknown error')
+                    return f"Error in {function_name}: {error_msg}"
                     
             except Exception as e:
+                logger.error(f"Error executing function {function_name}: {e}")
                 error_result = {
                     "status": "error",
                     "message": str(e),
@@ -268,7 +302,9 @@ For searching across all namespaces, use namespace="all" in get_pods function.
             user_proxy.clear_history()
             k8s_assistant.clear_history()
             
-            # Initiate direct chat
+            logger.info(f"Starting conversation with message: {message}")
+            
+            # Initiate direct chat with single turn
             chat_result = user_proxy.initiate_chat(
                 k8s_assistant,
                 message=message,
@@ -276,10 +312,25 @@ For searching across all namespaces, use namespace="all" in get_pods function.
                 silent=False
             )
             
+            logger.info(f"Chat completed, result type: {type(chat_result)}")
+            
+            # Extract messages from chat result
+            messages = []
+            if hasattr(chat_result, 'chat_history'):
+                messages = chat_result.chat_history
+            elif hasattr(chat_result, 'messages'):
+                messages = chat_result.messages
+            else:
+                # Fallback - get from agent histories
+                messages = user_proxy.chat_messages.get(k8s_assistant, [])
+            
+            logger.info(f"Extracted {len(messages)} messages")
+            
             return {
                 "agent": "k8s-assistant",
-                "messages": chat_result.chat_history if hasattr(chat_result, 'chat_history') else [],
-                "summary": chat_result.summary if hasattr(chat_result, 'summary') else "Task completed"
+                "messages": messages,
+                "summary": getattr(chat_result, 'summary', "Task completed"),
+                "task_id": task_id
             }
             
         except Exception as e:
@@ -287,7 +338,8 @@ For searching across all namespaces, use namespace="all" in get_pods function.
             return {
                 "agent": "k8s-assistant",
                 "error": str(e),
-                "messages": []
+                "messages": [],
+                "task_id": task_id
             }
     
     def get_recent_history(self, limit: int = 20) -> List[Dict[str, Any]]:
