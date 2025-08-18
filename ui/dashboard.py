@@ -319,7 +319,11 @@ class KratosDashboard:
                     
                     # Show conversation
                     if "messages" in task_result:
-                        self._display_conversation(task_result["messages"])
+                        messages = task_result["messages"]
+                        if messages:
+                            self._display_conversation(messages)
+                        else:
+                            st.info("Task completed but no conversation messages to display")
                     
                     # Show summary
                     if "summary" in task_result:
@@ -328,13 +332,21 @@ class KratosDashboard:
                     # Show function execution history
                     history = result.get("conversation_history", [])
                     if history:
+                        st.subheader("🔧 Function Execution Results")
+                        for entry in history[-3:]:  # Show last 3 function calls
+                            if entry['result'].get('status') == 'success':
+                                st.success(f"✅ **{entry['function']}**: {entry['result'].get('message', 'Success')}")
+                            else:
+                                st.error(f"❌ **{entry['function']}**: {entry['result'].get('message', 'Error')}")
+                        
                         with st.expander("🔍 Function Execution Details", expanded=False):
                             for entry in history[-3:]:  # Show last 3 function calls
-                                st.write(f"**{entry['function']}** - {entry['timestamp']}")
-                                if entry['result'].get('status') == 'success':
-                                    st.success(f"✅ {entry['result'].get('message', 'Success')}")
-                                else:
-                                    st.error(f"❌ {entry['result'].get('message', 'Error')}")
+                                st.json({
+                                    "function": entry['function'],
+                                    "parameters": entry['parameters'],
+                                    "result": entry['result'],
+                                    "timestamp": entry['timestamp']
+                                })
                     
                     # Show raw result for debugging
                     with st.expander("🔍 Raw Result", expanded=False):
@@ -418,6 +430,9 @@ class KratosDashboard:
         for i, msg in enumerate(messages):
             role = msg.get("role", "unknown")
             content = msg.get("content", "")
+            
+            # Log message for debugging
+            logger.info(f"Displaying message {i}: role={role}, content_length={len(content)}")
             
             # Skip empty messages
             if not content or content.strip() == "":
