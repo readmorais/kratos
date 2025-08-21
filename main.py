@@ -64,16 +64,16 @@ def load_configuration() -> dict:
         "max_round": int(os.getenv("AUTOGEN_MAX_ROUND", "10")),
         
         # MCP configuration
-        "mcp": {
-            "server_host": os.getenv("MCP_SERVER_HOST", "localhost"),
-            "server_port": int(os.getenv("MCP_SERVER_PORT", "8080")),
-            "aks_endpoint": os.getenv("AKS_MCP_ENDPOINT", "http://localhost:3000"),
-        },
+        # "mcp": {
+        #     "server_host": os.getenv("MCP_SERVER_HOST", "localhost"),
+        #     "server_port": int(os.getenv("MCP_SERVER_PORT", "8080")),
+        #     "aks_endpoint": os.getenv("AKS_MCP_ENDPOINT", "http://localhost:3000"),
+        # },
         
         # Agent configurations
         "agents": {
             "k8s-agent": {
-                "mcp_endpoint": os.getenv("AKS_MCP_ENDPOINT", "http://localhost:3000"),
+                # "mcp_endpoint": os.getenv("AKS_MCP_ENDPOINT", "http://localhost:3000"),
                 "timeout": int(os.getenv("AGENT_TIMEOUT", "300")),
                 "retry_attempts": int(os.getenv("AGENT_RETRY_ATTEMPTS", "3")),
             }
@@ -205,9 +205,9 @@ async def main():
     
     # Validate configuration
     # Check if MCP endpoint is configured
-    mcp_endpoint = config["agents"]["k8s-agent"].get("mcp_endpoint")
-    if not mcp_endpoint or mcp_endpoint == "http://localhost:3000":
-        logger.warning("⚠️  Using default MCP endpoint. Configure AKS_MCP_ENDPOINT for production use.")
+    # mcp_endpoint = config["agents"]["k8s-agent"].get("mcp_endpoint")
+    # if not mcp_endpoint or mcp_endpoint == "http://localhost:3000":
+    #     logger.warning("⚠️  Using default MCP endpoint. Configure AKS_MCP_ENDPOINT for production use.")
     
     logger.info("✅ Configuration loaded successfully")
     

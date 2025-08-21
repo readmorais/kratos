@@ -137,7 +137,7 @@ class KratosDashboard:
             # Agent configurations
             "agents": {
                 "k8s-agent": {
-                    "mcp_endpoint": os.getenv("AKS_MCP_ENDPOINT", "http://localhost:3000")
+                    # "mcp_endpoint": os.getenv("AKS_MCP_ENDPOINT", "http://localhost:3000")
                 }
             }
         }
@@ -200,7 +200,7 @@ class KratosDashboard:
             with st.expander("⚙️ Settings", expanded=False):
                 # Environment check
                 env_vars = [
-                    ("AKS_MCP_ENDPOINT", "MCP Server Endpoint"),
+                    # ("AKS_MCP_ENDPOINT", "MCP Server Endpoint"),
                     ("AZURE_OPENAI_API_KEY", "Azure OpenAI API Key"),
                     ("AZURE_OPENAI_ENDPOINT", "Azure OpenAI Endpoint"),
                     ("AZURE_OPENAI_DEPLOYMENT_NAME", "Azure OpenAI Deployment")
